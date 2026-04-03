@@ -42,6 +42,10 @@ $mqttQos = Get-Setting -Name "MQTT_QOS" -DefaultValue "0"
 $wsHost = Get-Setting -Name "WS_HOST" -DefaultValue "127.0.0.1"
 $wsPort = [int](Get-Setting -Name "WS_PORT" -DefaultValue "8000")
 $runId = Get-Setting -Name "RUN_ID" -DefaultValue (Get-Date -Format "yyyyMMdd-HHmmss")
+$gatewayMode = Get-Setting -Name "GATEWAY_MODE" -DefaultValue "v0"
+$batchWindowMs = Get-Setting -Name "BATCH_WINDOW_MS" -DefaultValue "250"
+$batchMaxMessages = Get-Setting -Name "BATCH_MAX_MESSAGES" -DefaultValue "50"
+$valueDedupEnabled = Get-Setting -Name "VALUE_DEDUP_ENABLED" -DefaultValue "0"
 $replaySpeed = Get-Setting -Name "REPLAY_SPEED" -DefaultValue "1.0"
 $sensorLimit = Get-Setting -Name "SENSOR_LIMIT" -DefaultValue "0"
 $durationS = [int](Get-Setting -Name "DURATION_S" -DefaultValue "60")
@@ -71,6 +75,10 @@ Set-Location '$repoRoot'
 `$env:WS_HOST = '$wsHost'
 `$env:WS_PORT = '$wsPort'
 `$env:RUN_ID = '$runId'
+`$env:GATEWAY_MODE = '$gatewayMode'
+`$env:BATCH_WINDOW_MS = '$batchWindowMs'
+`$env:BATCH_MAX_MESSAGES = '$batchMaxMessages'
+`$env:VALUE_DEDUP_ENABLED = '$valueDedupEnabled'
 python -m gateway.app
 "@
 

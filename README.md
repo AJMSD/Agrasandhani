@@ -1,6 +1,6 @@
 # Agrasandhani
 
-Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets into a minimal dashboard. This branch implements the MVP foundation only: CSV replay publisher -> Mosquitto -> Python gateway -> WebSocket -> static UI, with real counters, browser-side display measurements, and per-message CSV logging for later experiments.
+Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets into a minimal dashboard. It now supports the baseline forward-every-message path plus M2 aggregation modes for batching, exact duplicate suppression, latest-per-sensor compaction, and optional value-based deduplication.
 
 ## Stack
 
@@ -21,7 +21,7 @@ Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets
 - `simulator/datasets/intel_lab_sample.csv`: checked-in normalized Intel Lab example output
 - `gateway/app.py`: FastAPI app with `/health`, `/metrics`, `/ws`, and static UI serving
 - `gateway/mqtt_ingest.py`: MQTT subscriber that pushes broker messages into an internal queue
-- `gateway/forwarder.py`: baseline forward-every-message path, latest snapshot map, and CSV run logger
+- `gateway/forwarder.py`: gateway forwarding modes, aggregate-frame batching, metrics, and CSV run logger
 - `gateway/schemas.py`: shared payload validation
 - `ui/index.html`: dashboard with live measurement counters and display-event CSV export
 - `experiments/run_one.ps1`: standard 60s run harness
@@ -29,7 +29,7 @@ Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets
 
 ## Message Schema
 
-Every MQTT payload and WebSocket update uses this exact JSON shape:
+Every MQTT payload uses this exact JSON shape:
 
 ```json
 {
@@ -42,6 +42,32 @@ Every MQTT payload and WebSocket update uses this exact JSON shape:
 ```
 
 The simulator preserves pacing from the CSV timestamps, but rewrites outgoing `ts_sent` to the real publish time so latency instrumentation is based on actual sends.
+
+WebSocket outputs depend on `GATEWAY_MODE`:
+
+- `v0`: emits the raw `SensorMessage` payload above for each accepted MQTT message
+- `v1` and `v2`: emit an aggregate frame envelope
+
+```json
+{
+  "kind": "aggregate_frame",
+  "frame_id": 3,
+  "mode": "v2",
+  "flush_reason": "time",
+  "window_started_ms": 1712050000000,
+  "window_closed_ms": 1712050000250,
+  "update_count": 2,
+  "updates": [
+    {
+      "sensor_id": 101,
+      "msg_id": 9,
+      "ts_sent": 1712050000200,
+      "metric_type": "temperature",
+      "value": 20.9
+    }
+  ]
+}
+```
 
 ## Real Dataset Preprocessing
 
@@ -159,6 +185,10 @@ $env:MQTT_QOS = "0"
 $env:WS_HOST = "127.0.0.1"
 $env:WS_PORT = "8000"
 $env:RUN_ID = "manual-baseline"
+$env:GATEWAY_MODE = "v0"
+$env:BATCH_WINDOW_MS = "250"
+$env:BATCH_MAX_MESSAGES = "50"
+$env:VALUE_DEDUP_ENABLED = "0"
 python -m gateway.app
 ```
 
@@ -169,6 +199,10 @@ export MQTT_QOS=0
 export WS_HOST=127.0.0.1
 export WS_PORT=8000
 export RUN_ID=manual-baseline
+export GATEWAY_MODE=v0
+export BATCH_WINDOW_MS=250
+export BATCH_MAX_MESSAGES=50
+export VALUE_DEDUP_ENABLED=0
 python -m gateway.app
 ```
 
@@ -254,10 +288,10 @@ Expected result:
 
 - the UI updates with sensor rows
 - `/health` returns `status: ok`
-- `/metrics` shows non-zero `mqtt_in_msgs` and `latest_sensor_count`
+- `/metrics` shows non-zero `mqtt_in_msgs`, `latest_sensor_count`, and mode-specific outbound counters
 - the dashboard shows non-zero `Update Rate` and `WebSocket FPS` under traffic
 - the dashboard records display-side timing events and can export them as CSV
-- `experiments/logs/<RUN_ID>/gateway_forward_log.csv` contains one row per forwarded message
+- `experiments/logs/<RUN_ID>/gateway_forward_log.csv` contains one row per emitted sensor update with frame metadata
 
 UI measurement notes:
 
@@ -295,6 +329,10 @@ Optional overrides:
 
 ```powershell
 $env:RUN_ID = "session-001"
+$env:GATEWAY_MODE = "v2"
+$env:BATCH_WINDOW_MS = "250"
+$env:BATCH_MAX_MESSAGES = "50"
+$env:VALUE_DEDUP_ENABLED = "0"
 $env:DURATION_S = "60"
 $env:REPLAY_SPEED = "1.0"
 $env:SENSOR_LIMIT = "0"
@@ -308,6 +346,10 @@ $env:BURST_SPEED_MULTIPLIER = "5"
 
 ```bash
 export RUN_ID=session-001
+export GATEWAY_MODE=v2
+export BATCH_WINDOW_MS=250
+export BATCH_MAX_MESSAGES=50
+export VALUE_DEDUP_ENABLED=0
 export DURATION_S=60
 export REPLAY_SPEED=1.0
 export SENSOR_LIMIT=0
@@ -331,6 +373,10 @@ Artifacts are written to `experiments/logs/<RUN_ID>/`:
 - `MQTT_HOST`, `MQTT_PORT`, `MQTT_QOS`
 - `WS_HOST`, `WS_PORT`
 - `RUN_ID`
+- `GATEWAY_MODE` (`v0`, `v1`, or `v2`)
+- `BATCH_WINDOW_MS`
+- `BATCH_MAX_MESSAGES`
+- `VALUE_DEDUP_ENABLED`
 - `REPLAY_SPEED`
 - `SENSOR_LIMIT`
 - `DURATION_S`

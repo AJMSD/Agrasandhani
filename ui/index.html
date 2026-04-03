@@ -233,8 +233,8 @@
           </div>
         </div>
         <div class="headline-copy">
-          <h1>Agrasandhani Baseline</h1>
-          <p>Forward-every-message mode with live measurement counters, per-frame display timestamps, and browser-side CSV export.</p>
+          <h1>Agrasandhani Gateway</h1>
+          <p>Supports baseline forwarding and M2 aggregate-frame modes with live measurement counters and browser-side CSV export.</p>
         </div>
       </div>
       <div class="stats">
@@ -251,7 +251,7 @@
         <div class="stat-card">
           <span class="stat-label">Last Update</span>
           <span class="stat-value" id="last-update">--</span>
-          <span class="stat-detail">Browser receive time of the most recent WebSocket frame.</span>
+          <span class="stat-detail">Browser receive time of the most recent WebSocket event.</span>
         </div>
         <div class="stat-card">
           <span class="stat-label">Update Rate</span>
@@ -330,6 +330,8 @@
 
         const header = [
           "frame_index",
+          "frame_id",
+          "gateway_mode",
           "sensor_id",
           "metric_type",
           "msg_id",
@@ -342,6 +344,8 @@
         for (const event of measurementEvents) {
           lines.push([
             event.frame_index,
+            csvValue(event.frame_id),
+            csvValue(event.gateway_mode),
             csvValue(event.sensor_id),
             csvValue(event.metric_type),
             event.msg_id,
@@ -471,29 +475,36 @@
       });
 
       socket.addEventListener("message", (event) => {
-        const message = JSON.parse(event.data);
+        const payload = JSON.parse(event.data);
         const displayTimeMs = Date.now();
-        const ageMs = displayTimeMs - message.ts_sent;
-        const staleAtDisplay = ageMs > STALE_THRESHOLD_MS;
-
         frameCount += 1;
-        messageCount += 1;
         frameReceiveTimes.push(displayTimeMs);
-        updateTimes.push(displayTimeMs);
         pruneWindow(frameReceiveTimes, displayTimeMs);
-        pruneWindow(updateTimes, displayTimeMs);
 
-        records.set(recordKey(message), message);
-        measurementEvents.push({
-          frame_index: frameCount,
-          sensor_id: message.sensor_id,
-          metric_type: message.metric_type,
-          msg_id: message.msg_id,
-          ts_sent: message.ts_sent,
-          ts_displayed: displayTimeMs,
-          age_ms_at_display: ageMs,
-          stale_at_display: staleAtDisplay,
-        });
+        const gatewayMode = payload.kind === "aggregate_frame" ? payload.mode : "v0";
+        const frameId = payload.kind === "aggregate_frame" ? payload.frame_id : frameCount;
+        const updates = payload.kind === "aggregate_frame" ? payload.updates : [payload];
+
+        for (const message of updates) {
+          const ageMs = displayTimeMs - message.ts_sent;
+          const staleAtDisplay = ageMs > STALE_THRESHOLD_MS;
+          messageCount += 1;
+          updateTimes.push(displayTimeMs);
+          records.set(recordKey(message), message);
+          measurementEvents.push({
+            frame_index: frameCount,
+            frame_id: frameId,
+            gateway_mode: gatewayMode,
+            sensor_id: message.sensor_id,
+            metric_type: message.metric_type,
+            msg_id: message.msg_id,
+            ts_sent: message.ts_sent,
+            ts_displayed: displayTimeMs,
+            age_ms_at_display: ageMs,
+            stale_at_display: staleAtDisplay,
+          });
+        }
+        pruneWindow(updateTimes, displayTimeMs);
 
         lastUpdateNode.textContent = formatTimestamp(displayTimeMs);
         renderRows();

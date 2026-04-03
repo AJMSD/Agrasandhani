@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from gateway.forwarder import BaselineForwarder, CsvRunLogger
+from gateway.forwarder import BaselineForwarder, CsvRunLogger, ForwarderConfig, GatewayMode
 from gateway.mqtt_ingest import MQTTIngestor
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,6 +29,10 @@ class Settings:
     ws_host: str
     ws_port: int
     run_id: str
+    gateway_mode: GatewayMode
+    batch_window_ms: int
+    batch_max_messages: int
+    value_dedup_enabled: bool
 
 
 @dataclass(slots=True)
@@ -43,6 +47,10 @@ class AppServices:
 
 
 def load_settings() -> Settings:
+    gateway_mode = os.getenv("GATEWAY_MODE", "v0")
+    if gateway_mode not in {"v0", "v1", "v2"}:
+        raise ValueError(f"Unsupported GATEWAY_MODE '{gateway_mode}'. Expected one of v0, v1, v2.")
+
     return Settings(
         mqtt_host=os.getenv("MQTT_HOST", "127.0.0.1"),
         mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
@@ -50,6 +58,10 @@ def load_settings() -> Settings:
         ws_host=os.getenv("WS_HOST", "127.0.0.1"),
         ws_port=int(os.getenv("WS_PORT", "8000")),
         run_id=os.getenv("RUN_ID", "dev"),
+        gateway_mode=gateway_mode,
+        batch_window_ms=int(os.getenv("BATCH_WINDOW_MS", "250")),
+        batch_max_messages=int(os.getenv("BATCH_MAX_MESSAGES", "50")),
+        value_dedup_enabled=os.getenv("VALUE_DEDUP_ENABLED", "0") == "1",
     )
 
 
@@ -66,7 +78,16 @@ async def lifespan(app: FastAPI):
     settings = load_settings()
     inbound_queue: asyncio.Queue = asyncio.Queue()
     run_logger = CsvRunLogger(LOGS_ROOT / settings.run_id / "gateway_forward_log.csv")
-    forwarder = BaselineForwarder(inbound_queue=inbound_queue, run_logger=run_logger)
+    forwarder = BaselineForwarder(
+        inbound_queue=inbound_queue,
+        run_logger=run_logger,
+        config=ForwarderConfig(
+            mode=settings.gateway_mode,
+            batch_window_ms=settings.batch_window_ms,
+            batch_max_messages=settings.batch_max_messages,
+            value_dedup_enabled=settings.value_dedup_enabled,
+        ),
+    )
     mqtt_ingestor = MQTTIngestor(
         loop=asyncio.get_running_loop(),
         queue=inbound_queue,
@@ -116,7 +137,7 @@ async def health() -> dict[str, object]:
 
 
 @app.get("/metrics")
-async def metrics() -> dict[str, int | float]:
+async def metrics() -> dict[str, int | float | str]:
     services: AppServices = app.state.services
     return services.forwarder.metrics_snapshot(started_at_monotonic=services.started_at_monotonic)
 
