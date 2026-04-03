@@ -52,9 +52,33 @@ class AnalysisTests(unittest.TestCase):
                 json.dumps({"run_id": "demo", "variant": "v4", "scenario": "clean", "mqtt_qos": 1}),
                 encoding="utf-8",
             )
-            (run_dir / "gateway_metrics.json").write_text(json.dumps({"mqtt_in_msgs": 3}), encoding="utf-8")
+            (run_dir / "gateway_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mqtt_in_msgs": 3,
+                        "duplicates_dropped": 2,
+                        "compacted_dropped": 1,
+                        "value_dedup_dropped": 4,
+                        "effective_batch_window_ms": 250,
+                        "stale_sensor_count": 5,
+                    }
+                ),
+                encoding="utf-8",
+            )
             (run_dir / "proxy_metrics.json").write_text(
                 json.dumps({"dropped_frames": 1, "downstream_frames_out": 2, "downstream_bytes_out": 330}),
+                encoding="utf-8",
+            )
+            (run_dir / "dashboard_summary.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "staleCount": 6,
+                            "messageCount": 10,
+                            "frameCount": 2,
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -70,6 +94,14 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(summary["missing_updates_unclassified_count"], 0)
             self.assertEqual(summary["late_count"], 1)
             self.assertEqual(summary["proxy_dropped_frames"], 1)
+            self.assertEqual(summary["duplicates_dropped"], 2)
+            self.assertEqual(summary["compacted_dropped"], 1)
+            self.assertEqual(summary["value_dedup_dropped"], 4)
+            self.assertEqual(summary["effective_batch_window_ms"], 250)
+            self.assertEqual(summary["stale_sensor_count"], 5)
+            self.assertEqual(summary["dashboard_stale_count"], 6)
+            self.assertEqual(summary["dashboard_message_count"], 10)
+            self.assertEqual(summary["dashboard_frame_count"], 2)
             self.assertAlmostEqual(summary["stale_fraction"], 0.0)
             self.assertTrue((run_dir / "summary.json").exists())
             self.assertTrue((run_dir / "timeseries.csv").exists())

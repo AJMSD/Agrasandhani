@@ -1,0 +1,56 @@
+{
+  "intel_sweep_dir": "experiments\\logs\\final-intel-primary-20260403",
+  "aot_sweep_dir": "experiments\\logs\\final-aot-validation-20260403",
+  "demo_dir": "experiments\\logs\\final-demo-20260403\\demo",
+  "intel_runs": [
+    "v0-qos0-bandwidth_200kbps",
+    "v0-qos0-clean",
+    "v0-qos0-delay_50ms_jitter20ms",
+    "v0-qos0-loss_2pct",
+    "v0-qos0-outage_5s",
+    "v0-qos1-bandwidth_200kbps",
+    "v0-qos1-clean",
+    "v0-qos1-delay_50ms_jitter20ms",
+    "v0-qos1-loss_2pct",
+    "v0-qos1-outage_5s",
+    "v2-qos0-bandwidth_200kbps",
+    "v2-qos0-clean",
+    "v2-qos0-delay_50ms_jitter20ms",
+    "v2-qos0-loss_2pct",
+    "v2-qos0-outage_5s",
+    "v2-qos1-bandwidth_200kbps",
+    "v2-qos1-clean",
+    "v2-qos1-delay_50ms_jitter20ms",
+    "v2-qos1-loss_2pct",
+    "v2-qos1-outage_5s",
+    "v4-qos0-bandwidth_200kbps",
+    "v4-qos0-clean",
+    "v4-qos0-delay_50ms_jitter20ms",
+    "v4-qos0-loss_2pct",
+    "v4-qos0-outage_5s",
+    "v4-qos1-bandwidth_200kbps",
+    "v4-qos1-clean",
+    "v4-qos1-delay_50ms_jitter20ms",
+    "v4-qos1-loss_2pct",
+    "v4-qos1-outage_5s"
+  ],
+  "aot_runs": [
+    "v0-qos0-clean",
+    "v0-qos0-outage_5s",
+    "v4-qos0-clean",
+    "v4-qos0-outage_5s"
+  ],
+  "generated_figures": [
+    "report\\assets\\figures\\intel_clean_qos0_latency_cdf.png",
+    "report\\assets\\figures\\intel_outage_qos1_bandwidth_over_time.png",
+    "report\\assets\\figures\\intel_outage_qos1_message_rate_over_time.png",
+    "report\\assets\\figures\\final_demo_compare.png",
+    "report\\assets\\figures\\final_demo_baseline_dashboard.png",
+    "report\\assets\\figures\\final_demo_smart_dashboard.png"
+  ],
+  "generated_tables": [
+    "report\\assets\\tables\\intel_primary_run_summary.csv",
+    "report\\assets\\tables\\aot_validation_summary.csv",
+    "report\\assets\\tables\\intel_key_claims.md"
+  ]
+}

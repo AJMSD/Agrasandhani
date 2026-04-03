@@ -29,9 +29,19 @@ const url = args.url;
 const outputDir = args["output-dir"];
 const captureMs = Number(args["capture-ms"] || 30000);
 const checkOnly = Object.prototype.hasOwnProperty.call(args, "check-only");
+const screenshotOnly = Object.prototype.hasOwnProperty.call(args, "screenshot-only");
+const screenshotPath = args["screenshot-path"];
 
-if (!checkOnly && (!url || !outputDir)) {
-  throw new Error("Usage: node experiments/capture_dashboard.mjs --url <url> --output-dir <dir> [--capture-ms <ms>] [--check-only]");
+if (!checkOnly && !url) {
+  throw new Error("Usage: node experiments/capture_dashboard.mjs --url <url> --output-dir <dir> [--capture-ms <ms>] [--check-only] [--screenshot-only] [--screenshot-path <path>]");
+}
+
+if (!checkOnly && !screenshotOnly && !outputDir) {
+  throw new Error("Usage: node experiments/capture_dashboard.mjs --url <url> --output-dir <dir> [--capture-ms <ms>] [--check-only] [--screenshot-only] [--screenshot-path <path>]");
+}
+
+if (!checkOnly && screenshotOnly && !outputDir && !screenshotPath) {
+  throw new Error("Screenshot-only mode requires --output-dir or --screenshot-path.");
 }
 
 async function loadPlaywright() {
@@ -76,7 +86,12 @@ try {
     process.exit(0);
   }
 
-  await fs.mkdir(outputDir, { recursive: true });
+  if (outputDir) {
+    await fs.mkdir(outputDir, { recursive: true });
+  }
+  if (screenshotPath) {
+    await fs.mkdir(path.dirname(screenshotPath), { recursive: true });
+  }
 
   const chromium = await loadPlaywright();
   const browser = await chromium.launch({ headless: true });
@@ -84,22 +99,29 @@ try {
 
   try {
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    await page.waitForFunction(() => window.agrasandhaniMeasurements !== undefined, null, { timeout: 10000 });
-    await page.waitForFunction(() => {
-      const status = document.getElementById("connection-status");
-      return status && !status.textContent.includes("Connecting");
-    }, null, { timeout: 15000 });
-    await page.waitForTimeout(captureMs);
+    const resolvedScreenshotPath = screenshotPath || path.join(outputDir, "dashboard.png");
 
-    const payload = await page.evaluate(() => ({
-      csv: window.agrasandhaniMeasurements.exportCsv(),
-      summary: window.agrasandhaniMeasurements.summary,
-      thresholdMs: window.agrasandhaniMeasurements.thresholdMs,
-    }));
+    if (screenshotOnly) {
+      await page.waitForTimeout(captureMs);
+      await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
+    } else {
+      await page.waitForFunction(() => window.agrasandhaniMeasurements !== undefined, null, { timeout: 10000 });
+      await page.waitForFunction(() => {
+        const status = document.getElementById("connection-status");
+        return status && !status.textContent.includes("Connecting");
+      }, null, { timeout: 15000 });
+      await page.waitForTimeout(captureMs);
 
-    await fs.writeFile(path.join(outputDir, "dashboard_measurements.csv"), payload.csv, "utf-8");
-    await fs.writeFile(path.join(outputDir, "dashboard_summary.json"), JSON.stringify(payload, null, 2), "utf-8");
-    await page.screenshot({ path: path.join(outputDir, "dashboard.png"), fullPage: true });
+      const payload = await page.evaluate(() => ({
+        csv: window.agrasandhaniMeasurements.exportCsv(),
+        summary: window.agrasandhaniMeasurements.summary,
+        thresholdMs: window.agrasandhaniMeasurements.thresholdMs,
+      }));
+
+      await fs.writeFile(path.join(outputDir, "dashboard_measurements.csv"), payload.csv, "utf-8");
+      await fs.writeFile(path.join(outputDir, "dashboard_summary.json"), JSON.stringify(payload, null, 2), "utf-8");
+      await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
+    }
   } finally {
     await browser.close();
   }

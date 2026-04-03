@@ -39,6 +39,8 @@ SMART_GATEWAY_PORT="$(get_setting SMART_GATEWAY_PORT 8001)"
 BASELINE_PROXY_PORT="$(get_setting BASELINE_PROXY_PORT 9000)"
 SMART_PROXY_PORT="$(get_setting SMART_PROXY_PORT 9001)"
 NO_OPEN_BROWSER="$(get_setting NO_OPEN_BROWSER 0)"
+AUTO_PORTS="$(get_setting AUTO_PORTS 0)"
+CAPTURE_ARTIFACTS="$(get_setting CAPTURE_ARTIFACTS 0)"
 
 ARGS=(
   "./experiments/run_demo.py"
@@ -66,6 +68,14 @@ fi
 
 if [[ "${NO_OPEN_BROWSER}" == "1" ]]; then
   ARGS+=("--no-open-browser")
+fi
+
+if [[ "${AUTO_PORTS}" == "1" ]]; then
+  ARGS+=("--auto-ports")
+fi
+
+if [[ "${CAPTURE_ARTIFACTS}" == "1" ]]; then
+  ARGS+=("--capture-artifacts")
 fi
 
 cd "${REPO_ROOT}"

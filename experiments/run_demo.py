@@ -17,10 +17,19 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from experiments.run_sweep import ensure_browser_capture_prerequisites
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOGS_ROOT = BASE_DIR / "experiments" / "logs"
+CAPTURE_SCRIPT = BASE_DIR / "experiments" / "capture_dashboard.mjs"
 DEFAULT_SCENARIO_FILE = BASE_DIR / "experiments" / "scenarios" / "demo_v0_vs_v4.json"
 DEFAULT_DATA_FILE = BASE_DIR / "simulator" / "sample_data.csv"
+SERVICE_PORT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("baseline_gateway", "baseline_gateway_host", "baseline_gateway_port"),
+    ("smart_gateway", "smart_gateway_host", "smart_gateway_port"),
+    ("baseline_proxy", "baseline_proxy_host", "baseline_proxy_port"),
+    ("smart_proxy", "smart_proxy_host", "smart_proxy_port"),
+)
 
 
 @dataclass(slots=True)
@@ -49,6 +58,8 @@ class DemoConfig:
     left_label: str
     right_label: str
     open_browser: bool
+    auto_ports: bool
+    capture_artifacts: bool
     settle_after_run_s: int
 
 
@@ -82,6 +93,15 @@ def _port_available(host: str, port: int) -> bool:
         sock.close()
 
 
+def _pick_free_port(host: str) -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
+
+
 def _wait_for_http(url: str, *, timeout_s: int = 15) -> None:
     deadline = time.time() + timeout_s
     last_error = None
@@ -96,6 +116,8 @@ def _wait_for_http(url: str, *, timeout_s: int = 15) -> None:
 
 
 def _spawn(command: list[str], *, env: dict[str, str], stdout_path: Path, stderr_path: Path) -> subprocess.Popen[str]:
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_handle = stdout_path.open("w", encoding="utf-8")
     stderr_handle = stderr_path.open("w", encoding="utf-8")
     try:
@@ -163,6 +185,8 @@ def parse_args(argv: list[str] | None = None) -> DemoConfig:
     parser.add_argument("--left-label", default="Baseline v0")
     parser.add_argument("--right-label", default="Smart v4")
     parser.add_argument("--no-open-browser", action="store_true")
+    parser.add_argument("--auto-ports", action="store_true")
+    parser.add_argument("--capture-artifacts", action="store_true")
     parser.add_argument("--settle-after-run-s", type=int, default=2)
     args = parser.parse_args(argv)
 
@@ -191,8 +215,38 @@ def parse_args(argv: list[str] | None = None) -> DemoConfig:
         left_label=args.left_label,
         right_label=args.right_label,
         open_browser=not args.no_open_browser,
+        auto_ports=args.auto_ports,
+        capture_artifacts=args.capture_artifacts,
         settle_after_run_s=args.settle_after_run_s,
     )
+
+
+def effective_port_map(config: DemoConfig) -> dict[str, dict[str, int | str]]:
+    return {
+        label: {
+            "host": str(getattr(config, host_field)),
+            "port": int(getattr(config, port_field)),
+        }
+        for label, host_field, port_field in SERVICE_PORT_FIELDS
+    }
+
+
+def resolve_demo_ports(config: DemoConfig) -> None:
+    assigned: set[tuple[str, int]] = set()
+    for _, host_field, port_field in SERVICE_PORT_FIELDS:
+        host = str(getattr(config, host_field))
+        port = int(getattr(config, port_field))
+        if _port_available(host, port) and (host, port) not in assigned:
+            assigned.add((host, port))
+            continue
+
+        while True:
+            candidate = _pick_free_port(host)
+            if (host, candidate) in assigned:
+                continue
+            setattr(config, port_field, candidate)
+            assigned.add((host, candidate))
+            break
 
 
 def validate_environment(config: DemoConfig) -> None:
@@ -206,13 +260,18 @@ def validate_environment(config: DemoConfig) -> None:
             "Start Mosquitto before running experiments/run_demo.py."
         )
 
-    port_checks = [
-        ("baseline_gateway", config.baseline_gateway_host, config.baseline_gateway_port),
-        ("smart_gateway", config.smart_gateway_host, config.smart_gateway_port),
-        ("baseline_proxy", config.baseline_proxy_host, config.baseline_proxy_port),
-        ("smart_proxy", config.smart_proxy_host, config.smart_proxy_port),
-    ]
-    busy_ports = [f"{label}={host}:{port}" for label, host, port in port_checks if not _port_available(host, port)]
+    if config.auto_ports:
+        resolve_demo_ports(config)
+        return
+
+    busy_ports = []
+    seen: set[tuple[str, int]] = set()
+    for label, host_field, port_field in SERVICE_PORT_FIELDS:
+        host = str(getattr(config, host_field))
+        port = int(getattr(config, port_field))
+        if (host, port) in seen or not _port_available(host, port):
+            busy_ports.append(f"{label}={host}:{port}")
+        seen.add((host, port))
     if busy_ports:
         raise SystemExit(f"Required demo ports are already in use: {', '.join(busy_ports)}")
 
@@ -238,58 +297,45 @@ def _terminate_process(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=5)
 
 
-def run_demo(config: DemoConfig) -> Path:
-    python_exe = _find_python()
-    run_dir = LOGS_ROOT / config.run_id / "demo"
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    baseline_gateway_run_id = f"{config.run_id}-baseline-gateway"
-    smart_gateway_run_id = f"{config.run_id}-smart-gateway"
-    compare_url = build_compare_url(config)
-    scenario_metadata = load_scenario_metadata(config.scenario_file)
-
-    baseline_gateway_env = os.environ.copy() | {
-        "RUN_ID": baseline_gateway_run_id,
+def _build_gateway_env(config: DemoConfig, *, run_id: str, host: str, port: int, mode: str) -> dict[str, str]:
+    env = os.environ.copy() | {
+        "RUN_ID": run_id,
         "MQTT_HOST": config.mqtt_host,
         "MQTT_PORT": str(config.mqtt_port),
         "MQTT_QOS": str(config.mqtt_qos),
-        "WS_HOST": config.baseline_gateway_host,
-        "WS_PORT": str(config.baseline_gateway_port),
-        "GATEWAY_MODE": "v0",
+        "WS_HOST": host,
+        "WS_PORT": str(port),
+        "GATEWAY_MODE": mode,
     }
-    smart_gateway_env = os.environ.copy() | {
-        "RUN_ID": smart_gateway_run_id,
-        "MQTT_HOST": config.mqtt_host,
-        "MQTT_PORT": str(config.mqtt_port),
-        "MQTT_QOS": str(config.mqtt_qos),
-        "WS_HOST": config.smart_gateway_host,
-        "WS_PORT": str(config.smart_gateway_port),
-        "GATEWAY_MODE": "v4",
-        "FRESHNESS_TTL_MS": "1000",
-    }
-    baseline_proxy_env = os.environ.copy() | {
-        "RUN_ID": f"{config.run_id}-baseline-proxy",
-        "IMPAIR_HOST": config.baseline_proxy_host,
-        "IMPAIR_PORT": str(config.baseline_proxy_port),
-        "UPSTREAM_WS_URL": f"ws://{config.baseline_gateway_host}:{config.baseline_gateway_port}/ws",
-        "UPSTREAM_HTTP_BASE": f"http://{config.baseline_gateway_host}:{config.baseline_gateway_port}",
+    if mode == "v4":
+        env["FRESHNESS_TTL_MS"] = "1000"
+    return env
+
+
+def _build_proxy_env(
+    config: DemoConfig,
+    *,
+    run_id: str,
+    host: str,
+    port: int,
+    upstream_host: str,
+    upstream_port: int,
+    frame_log_path: Path,
+) -> dict[str, str]:
+    return os.environ.copy() | {
+        "RUN_ID": run_id,
+        "IMPAIR_HOST": host,
+        "IMPAIR_PORT": str(port),
+        "UPSTREAM_WS_URL": f"ws://{upstream_host}:{upstream_port}/ws",
+        "UPSTREAM_HTTP_BASE": f"http://{upstream_host}:{upstream_port}",
         "IMPAIR_SCENARIO_FILE": str(config.scenario_file),
         "IMPAIR_RANDOM_SEED": "537",
-        "IMPAIR_FRAME_LOG_PATH": str(run_dir / "baseline_proxy_frame_log.csv"),
+        "IMPAIR_FRAME_LOG_PATH": str(frame_log_path),
     }
-    smart_proxy_env = os.environ.copy() | {
-        "RUN_ID": f"{config.run_id}-smart-proxy",
-        "IMPAIR_HOST": config.smart_proxy_host,
-        "IMPAIR_PORT": str(config.smart_proxy_port),
-        "UPSTREAM_WS_URL": f"ws://{config.smart_gateway_host}:{config.smart_gateway_port}/ws",
-        "UPSTREAM_HTTP_BASE": f"http://{config.smart_gateway_host}:{config.smart_gateway_port}",
-        "IMPAIR_SCENARIO_FILE": str(config.scenario_file),
-        "IMPAIR_RANDOM_SEED": "537",
-        "IMPAIR_FRAME_LOG_PATH": str(run_dir / "smart_proxy_frame_log.csv"),
-    }
-    simulator_env = os.environ.copy() | {
+
+
+def _build_simulator_env(config: DemoConfig) -> dict[str, str]:
+    return os.environ.copy() | {
         "RUN_ID": f"{config.run_id}-simulator",
         "MQTT_HOST": config.mqtt_host,
         "MQTT_PORT": str(config.mqtt_port),
@@ -303,33 +349,141 @@ def run_demo(config: DemoConfig) -> Path:
         "BURST_SPEED_MULTIPLIER": str(config.burst_speed_multiplier),
     }
 
+
+def _capture_duration_ms(config: DemoConfig) -> int:
+    return max(1_000, (config.duration_s + config.settle_after_run_s + 2) * 1_000)
+
+
+def _capture_wait_timeout_s(config: DemoConfig) -> int:
+    return config.duration_s + config.settle_after_run_s + 30
+
+
+def _start_capture_process(
+    *,
+    url: str,
+    capture_ms: int,
+    stdout_path: Path,
+    stderr_path: Path,
+    output_dir: Path | None = None,
+    screenshot_path: Path | None = None,
+) -> subprocess.Popen[str]:
+    command = [
+        "node",
+        str(CAPTURE_SCRIPT),
+        "--url",
+        url,
+        "--capture-ms",
+        str(capture_ms),
+    ]
+    if output_dir is not None:
+        command.extend(["--output-dir", str(output_dir)])
+    if screenshot_path is not None:
+        command.extend(["--screenshot-only", "--screenshot-path", str(screenshot_path)])
+
+    return _spawn(
+        command,
+        env=os.environ.copy(),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+
+def _wait_for_process_exit(
+    process: subprocess.Popen[str],
+    *,
+    timeout_s: int,
+    process_name: str,
+    stderr_path: Path,
+) -> None:
+    try:
+        process.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process(process)
+        raise RuntimeError(f"{process_name} timed out. Check {stderr_path}") from exc
+
+    if process.returncode != 0:
+        raise RuntimeError(f"{process_name} failed with code {process.returncode}. Check {stderr_path}")
+
+
+def _capture_artifact_paths(run_dir: Path) -> dict[str, str]:
+    return {
+        "baseline_dashboard": str(run_dir / "baseline_dashboard"),
+        "smart_dashboard": str(run_dir / "smart_dashboard"),
+        "compare_screenshot": str(run_dir / "demo_compare.png"),
+    }
+
+
+def run_demo(config: DemoConfig) -> Path:
+    if config.capture_artifacts:
+        ensure_browser_capture_prerequisites()
+
+    python_exe = _find_python()
+    run_dir = LOGS_ROOT / config.run_id / "demo"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_gateway_run_id = f"{config.run_id}-baseline-gateway"
+    smart_gateway_run_id = f"{config.run_id}-smart-gateway"
+    compare_url = build_compare_url(config)
+    scenario_metadata = load_scenario_metadata(config.scenario_file)
+
     processes = {
         "baseline_gateway": _spawn(
             [python_exe, "-m", "gateway.app"],
-            env=baseline_gateway_env,
+            env=_build_gateway_env(
+                config,
+                run_id=baseline_gateway_run_id,
+                host=config.baseline_gateway_host,
+                port=config.baseline_gateway_port,
+                mode="v0",
+            ),
             stdout_path=run_dir / "baseline_gateway.stdout.log",
             stderr_path=run_dir / "baseline_gateway.stderr.log",
         ),
         "smart_gateway": _spawn(
             [python_exe, "-m", "gateway.app"],
-            env=smart_gateway_env,
+            env=_build_gateway_env(
+                config,
+                run_id=smart_gateway_run_id,
+                host=config.smart_gateway_host,
+                port=config.smart_gateway_port,
+                mode="v4",
+            ),
             stdout_path=run_dir / "smart_gateway.stdout.log",
             stderr_path=run_dir / "smart_gateway.stderr.log",
         ),
         "baseline_proxy": _spawn(
             [python_exe, "-m", "experiments.impairment_proxy"],
-            env=baseline_proxy_env,
+            env=_build_proxy_env(
+                config,
+                run_id=f"{config.run_id}-baseline-proxy",
+                host=config.baseline_proxy_host,
+                port=config.baseline_proxy_port,
+                upstream_host=config.baseline_gateway_host,
+                upstream_port=config.baseline_gateway_port,
+                frame_log_path=run_dir / "baseline_proxy_frame_log.csv",
+            ),
             stdout_path=run_dir / "baseline_proxy.stdout.log",
             stderr_path=run_dir / "baseline_proxy.stderr.log",
         ),
         "smart_proxy": _spawn(
             [python_exe, "-m", "experiments.impairment_proxy"],
-            env=smart_proxy_env,
+            env=_build_proxy_env(
+                config,
+                run_id=f"{config.run_id}-smart-proxy",
+                host=config.smart_proxy_host,
+                port=config.smart_proxy_port,
+                upstream_host=config.smart_gateway_host,
+                upstream_port=config.smart_gateway_port,
+                frame_log_path=run_dir / "smart_proxy_frame_log.csv",
+            ),
             stdout_path=run_dir / "smart_proxy.stdout.log",
             stderr_path=run_dir / "smart_proxy.stderr.log",
         ),
     }
 
+    capture_processes: list[tuple[str, subprocess.Popen[str], Path]] = []
     simulator_process: subprocess.Popen[str] | None = None
     manifest: dict[str, object] = {
         "run_id": config.run_id,
@@ -346,6 +500,9 @@ def run_demo(config: DemoConfig) -> Path:
         "burst_start_s": config.burst_start_s,
         "burst_duration_s": config.burst_duration_s,
         "burst_speed_multiplier": config.burst_speed_multiplier,
+        "auto_ports": config.auto_ports,
+        "capture_artifacts": config.capture_artifacts,
+        "effective_ports": effective_port_map(config),
         "services": {
             "baseline_gateway": f"http://{config.baseline_gateway_host}:{config.baseline_gateway_port}",
             "smart_gateway": f"http://{config.smart_gateway_host}:{config.smart_gateway_port}",
@@ -353,6 +510,8 @@ def run_demo(config: DemoConfig) -> Path:
             "smart_proxy": f"http://{config.smart_proxy_host}:{config.smart_proxy_port}",
         },
     }
+    if config.capture_artifacts:
+        manifest["artifact_paths"] = _capture_artifact_paths(run_dir)
 
     try:
         _wait_for_http(f"http://{config.baseline_gateway_host}:{config.baseline_gateway_port}/health")
@@ -360,23 +519,74 @@ def run_demo(config: DemoConfig) -> Path:
         _wait_for_http(f"http://{config.baseline_proxy_host}:{config.baseline_proxy_port}/health")
         _wait_for_http(f"http://{config.smart_proxy_host}:{config.smart_proxy_port}/health")
 
+        if config.capture_artifacts:
+            capture_ms = _capture_duration_ms(config)
+            baseline_dashboard_dir = run_dir / "baseline_dashboard"
+            smart_dashboard_dir = run_dir / "smart_dashboard"
+            baseline_dashboard_dir.mkdir(parents=True, exist_ok=True)
+            smart_dashboard_dir.mkdir(parents=True, exist_ok=True)
+            capture_processes = [
+                (
+                    "baseline dashboard capture",
+                    _start_capture_process(
+                        url=f"http://{config.baseline_proxy_host}:{config.baseline_proxy_port}/ui/index.html",
+                        capture_ms=capture_ms,
+                        output_dir=baseline_dashboard_dir,
+                        stdout_path=baseline_dashboard_dir / "capture.stdout.log",
+                        stderr_path=baseline_dashboard_dir / "capture.stderr.log",
+                    ),
+                    baseline_dashboard_dir / "capture.stderr.log",
+                ),
+                (
+                    "smart dashboard capture",
+                    _start_capture_process(
+                        url=f"http://{config.smart_proxy_host}:{config.smart_proxy_port}/ui/index.html",
+                        capture_ms=capture_ms,
+                        output_dir=smart_dashboard_dir,
+                        stdout_path=smart_dashboard_dir / "capture.stdout.log",
+                        stderr_path=smart_dashboard_dir / "capture.stderr.log",
+                    ),
+                    smart_dashboard_dir / "capture.stderr.log",
+                ),
+                (
+                    "compare page capture",
+                    _start_capture_process(
+                        url=compare_url,
+                        capture_ms=capture_ms,
+                        screenshot_path=run_dir / "demo_compare.png",
+                        stdout_path=run_dir / "demo_compare_capture.stdout.log",
+                        stderr_path=run_dir / "demo_compare_capture.stderr.log",
+                    ),
+                    run_dir / "demo_compare_capture.stderr.log",
+                ),
+            ]
+
         if config.open_browser:
             webbrowser.open(compare_url, new=2)
 
-        print(f"Demo compare page: {compare_url}")
-
         simulator_process = _spawn(
             [python_exe, str(BASE_DIR / "simulator" / "replay_publisher.py"), "--data-file", str(config.data_file)],
-            env=simulator_env,
+            env=_build_simulator_env(config),
             stdout_path=run_dir / "simulator.stdout.log",
             stderr_path=run_dir / "simulator.stderr.log",
         )
-        simulator_process.wait(timeout=config.duration_s + 20)
-        if simulator_process.returncode != 0:
-            raise RuntimeError(f"Simulator exited with code {simulator_process.returncode}")
+        _wait_for_process_exit(
+            simulator_process,
+            timeout_s=config.duration_s + 20,
+            process_name="simulator",
+            stderr_path=run_dir / "simulator.stderr.log",
+        )
 
         if config.settle_after_run_s > 0:
             time.sleep(config.settle_after_run_s)
+
+        for process_name, process, stderr_path in capture_processes:
+            _wait_for_process_exit(
+                process,
+                timeout_s=_capture_wait_timeout_s(config),
+                process_name=process_name,
+                stderr_path=stderr_path,
+            )
 
         metrics_targets = [
             ("baseline_gateway_metrics.json", f"http://{config.baseline_gateway_host}:{config.baseline_gateway_port}/metrics"),
@@ -399,6 +609,8 @@ def run_demo(config: DemoConfig) -> Path:
     finally:
         if simulator_process is not None:
             _terminate_process(simulator_process)
+        for _, process, _ in reversed(capture_processes):
+            _terminate_process(process)
         for process in reversed(list(processes.values())):
             _terminate_process(process)
 
@@ -410,7 +622,19 @@ def main() -> None:
     config = parse_args()
     validate_environment(config)
     run_dir = run_demo(config)
-    print(json.dumps({"run_id": config.run_id, "run_dir": str(run_dir), "compare_url": build_compare_url(config)}, indent=2))
+    print(f"Demo compare page: {build_compare_url(config)}")
+    print(
+        json.dumps(
+            {
+                "run_id": config.run_id,
+                "run_dir": str(run_dir),
+                "compare_url": build_compare_url(config),
+                "capture_artifacts": config.capture_artifacts,
+                "effective_ports": effective_port_map(config),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

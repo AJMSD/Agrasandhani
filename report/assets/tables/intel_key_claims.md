@@ -1,0 +1,6 @@
+- Intel clean qos0 latency p95 was 131.8 ms for V0, 269.0 ms for V2, and 682.0 ms for V4.
+- Intel outage qos1 downstream frame count dropped from 116 in V0 to 4 in V2 and 5 in V4 (-95.7% vs V0).
+- Intel outage qos1 downstream bytes moved from 10605 in V0 to 15621 in V4 (47.3% vs V0), which captures the tradeoff between fewer frames and larger aggregate envelopes.
+- Intel qos1 runs saw 0 duplicate drops across the primary sweep while averaging 180.0 MQTT ingress messages per run, so the broker-backed setup did not surface strong QoS1 retransmit duplication in this environment.
+- The captured demo ended with baseline staleCount=48 and smart staleCount=92, while smart mode rendered only 4 frames versus 60 for the raw baseline and retained 92 latest rows versus 48 in the captured end state.
+- AoT validation on qos0 clean kept the pipeline working on a second public source; V0 rendered 439 frames and V4 rendered 18 frames with p95 latencies of 30.0 ms and 277.0 ms respectively.

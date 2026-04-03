@@ -89,6 +89,41 @@ class PlaywrightCaptureTests(unittest.TestCase):
         summary = json.loads((output_dir / "dashboard_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["summary"]["messageCount"], 2)
 
+    def test_capture_dashboard_screenshot_only_captures_generic_page(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for Playwright capture tests")
+
+        fixture_dir = Path("tests/fixtures/m4").resolve()
+        screenshot_path = Path(tempfile.mkdtemp()) / "generic-page.png"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), lambda *args, **kwargs: _SilentStaticHandler(*args, directory=str(fixture_dir), **kwargs))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        url = f"http://127.0.0.1:{server.server_port}/playwright_fixture.html"
+        result = subprocess.run(
+            [
+                "node",
+                "experiments/capture_dashboard.mjs",
+                "--url",
+                url,
+                "--capture-ms",
+                "10",
+                "--screenshot-only",
+                "--screenshot-path",
+                str(screenshot_path),
+            ],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            self.skipTest(f"Playwright runtime unavailable: {result.stderr.strip()}")
+
+        self.assertTrue(screenshot_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

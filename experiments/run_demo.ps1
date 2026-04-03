@@ -36,6 +36,8 @@ $smartGatewayPort = Get-Setting -Name "SMART_GATEWAY_PORT" -DefaultValue "8001"
 $baselineProxyPort = Get-Setting -Name "BASELINE_PROXY_PORT" -DefaultValue "9000"
 $smartProxyPort = Get-Setting -Name "SMART_PROXY_PORT" -DefaultValue "9001"
 $noOpenBrowser = Get-Setting -Name "NO_OPEN_BROWSER" -DefaultValue "0"
+$autoPorts = Get-Setting -Name "AUTO_PORTS" -DefaultValue "0"
+$captureArtifacts = Get-Setting -Name "CAPTURE_ARTIFACTS" -DefaultValue "0"
 
 $arguments = @(
     ".\experiments\run_demo.py",
@@ -62,6 +64,12 @@ if ($burstEnabled -eq "0") {
 }
 if ($noOpenBrowser -eq "1") {
     $arguments += "--no-open-browser"
+}
+if ($autoPorts -eq "1") {
+    $arguments += "--auto-ports"
+}
+if ($captureArtifacts -eq "1") {
+    $arguments += "--capture-artifacts"
 }
 
 Push-Location $repoRoot

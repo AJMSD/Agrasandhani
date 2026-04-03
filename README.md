@@ -561,6 +561,8 @@ Default demo behavior:
 - simulator run: `20s` total with burst enabled at `2s` for `4s` using an `8x` burst multiplier
 - ports: baseline gateway `8000`, smart gateway `8001`, baseline proxy `9000`, smart proxy `9001`
 - compare page: served from the baseline proxy at `/ui/demo_compare.html`
+- default behavior remains fail-fast if those demo ports are already occupied
+- browser artifact capture is off by default and only runs when explicitly requested
 
 One-command launch:
 
@@ -593,6 +595,28 @@ python .\experiments\run_demo.py --run-id m5-demo-smoke --no-open-browser
 python ./experiments/run_demo.py --run-id m5-demo-smoke --no-open-browser
 ```
 
+Optional additive flags:
+
+- `--auto-ports`: if one of the default demo ports is busy, reassign only the conflicting services to free ports and record the effective ports in `manifest.json`
+- `--capture-artifacts`: capture baseline and smart dashboard CSV/summary/screenshot artifacts plus a final `demo_compare.png` screenshot
+
+Examples:
+
+```powershell
+python .\experiments\run_demo.py --run-id m5-demo-auto --no-open-browser --auto-ports
+python .\experiments\run_demo.py --run-id m5-demo-capture --no-open-browser --capture-artifacts
+```
+
+```bash
+python ./experiments/run_demo.py --run-id m5-demo-auto --no-open-browser --auto-ports
+python ./experiments/run_demo.py --run-id m5-demo-capture --no-open-browser --capture-artifacts
+```
+
+Wrapper toggles:
+
+- `AUTO_PORTS=1` enables `--auto-ports`
+- `CAPTURE_ARTIFACTS=1` enables `--capture-artifacts`
+
 Expected live differences:
 
 - `v0` shows higher update-rate churn during the burst window because every incoming message is forwarded directly
@@ -612,6 +636,42 @@ Artifacts are written to `experiments/logs/<RUN_ID>/demo/`:
 - `baseline_gateway_forward_log.csv`, `smart_gateway_forward_log.csv`
 - `baseline_proxy_frame_log.csv`, `smart_proxy_frame_log.csv`
 - `manifest.json` with the compare URL and effective demo configuration
+
+When `--capture-artifacts` is enabled, the same demo directory also includes:
+
+- `baseline_dashboard/dashboard_measurements.csv`
+- `baseline_dashboard/dashboard_summary.json`
+- `baseline_dashboard/dashboard.png`
+- `smart_dashboard/dashboard_measurements.csv`
+- `smart_dashboard/dashboard_summary.json`
+- `smart_dashboard/dashboard.png`
+- `demo_compare.png`
+
+## Final Deliverables
+
+The tracked M5 deliverables now live under `report/`:
+
+- `report/README.md`: final deliverables index
+- `report/reproducibility.md`: end-to-end rerun instructions for preprocessing, sweeps, demo capture, and report asset regeneration
+- `report/related_work_notes.md`: scholarly framing notes for MQTT QoS, pub/sub positioning, and SENSELET++ inspiration
+- `report/references.bib`: report bibliography
+- `report/assets/`: tracked figures, tables, and the evidence manifest generated from local final runs
+
+End-to-end runner:
+
+```powershell
+$env:INTEL_LAB_INPUT = "C:\path\to\data.txt.gz"
+$env:AOT_INPUT = "C:\path\to\chicago-complete.weekly.2019-09-30-to-2019-10-06.tar"
+.\experiments\run_final_deliverables.ps1
+```
+
+```bash
+export INTEL_LAB_INPUT=/path/to/data.txt.gz
+export AOT_INPUT=/path/to/chicago-complete.weekly.2019-09-30-to-2019-10-06.tar
+./experiments/run_final_deliverables.sh
+```
+
+This runner preprocesses the raw datasets into ignored replay CSVs under `experiments/logs/generated_inputs/`, executes the Intel primary sweep plus the AoT validation sweep, captures the final M5 demo, and regenerates the tracked report assets. The large logs remain local-only under `experiments/logs/`; only the derived report package is intended to be committed.
 
 ## Environment Variables
 

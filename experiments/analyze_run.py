@@ -17,6 +17,12 @@ def _load_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
@@ -85,7 +91,9 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
     gateway_rows = _load_csv(run_dir / "gateway_forward_log.csv")
     proxy_rows = _load_csv(run_dir / "proxy_frame_log.csv")
     browser_rows = _load_csv(run_dir / "dashboard_measurements.csv")
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8")) if (run_dir / "manifest.json").exists() else {}
+    manifest = _load_json(run_dir / "manifest.json")
+    dashboard_summary_payload = _load_json(run_dir / "dashboard_summary.json")
+    dashboard_summary = dashboard_summary_payload.get("summary", {}) if isinstance(dashboard_summary_payload, dict) else {}
 
     latencies = [float(row["age_ms_at_display"]) for row in browser_rows]
     stale_flags = [row["stale_at_display"].lower() == "true" for row in browser_rows]
@@ -167,12 +175,8 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
         second = int(int(row["ts_displayed"]) / 1000)
         update_rate_by_second[second] += 1
 
-    gateway_metrics = {}
-    proxy_metrics = {}
-    if (run_dir / "gateway_metrics.json").exists():
-        gateway_metrics = json.loads((run_dir / "gateway_metrics.json").read_text(encoding="utf-8"))
-    if (run_dir / "proxy_metrics.json").exists():
-        proxy_metrics = json.loads((run_dir / "proxy_metrics.json").read_text(encoding="utf-8"))
+    gateway_metrics = _load_json(run_dir / "gateway_metrics.json")
+    proxy_metrics = _load_json(run_dir / "proxy_metrics.json")
 
     summary = {
         "run_id": manifest.get("run_id", run_dir.name),
@@ -200,12 +204,20 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
         "missing_updates_unclassified_count": missing_updates_unclassified_count,
         "missing_sensor_count": len(missing_by_sensor),
         "gateway_mqtt_in_msgs": gateway_metrics.get("mqtt_in_msgs", 0),
+        "duplicates_dropped": gateway_metrics.get("duplicates_dropped", 0),
+        "compacted_dropped": gateway_metrics.get("compacted_dropped", 0),
+        "value_dedup_dropped": gateway_metrics.get("value_dedup_dropped", 0),
+        "effective_batch_window_ms": gateway_metrics.get("effective_batch_window_ms", 0),
+        "stale_sensor_count": gateway_metrics.get("stale_sensor_count", 0),
         "proxy_dropped_frames": proxy_metrics.get("dropped_frames", 0),
         "proxy_downstream_frames_out": proxy_metrics.get("downstream_frames_out", 0),
         "proxy_downstream_bytes_out": proxy_metrics.get("downstream_bytes_out", 0),
         "max_bandwidth_bytes_per_s": max(bandwidth_by_second.values(), default=0),
         "max_frame_rate_per_s": max(frame_rate_by_second.values(), default=0),
         "max_update_rate_per_s": max(update_rate_by_second.values(), default=0),
+        "dashboard_stale_count": dashboard_summary.get("staleCount", 0),
+        "dashboard_message_count": dashboard_summary.get("messageCount", 0),
+        "dashboard_frame_count": dashboard_summary.get("frameCount", 0),
     }
     if not missing_update_count_exact:
         summary["matching_note"] = "gateway_forward_log.csv lacks metric_type; rerun with current schema for exact missing-update analysis"
