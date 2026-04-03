@@ -13,6 +13,9 @@
       --muted: #615d56;
       --accent: #2b6c4b;
       --accent-soft: rgba(43, 108, 75, 0.14);
+      --accent-strong: #1f563a;
+      --warn: #8f4d1f;
+      --warn-soft: rgba(143, 77, 31, 0.16);
     }
 
     * {
@@ -42,6 +45,8 @@
     }
 
     .headline {
+      display: grid;
+      gap: 1rem;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 24px;
@@ -49,8 +54,28 @@
       box-shadow: 0 18px 40px rgba(94, 78, 55, 0.08);
     }
 
+    .headline-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .headline-copy {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .headline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
     h1 {
-      margin: 0 0 0.5rem;
+      margin: 0;
       font-size: clamp(2rem, 4vw, 3.4rem);
       line-height: 1;
       letter-spacing: -0.04em;
@@ -89,6 +114,14 @@
       margin-top: 0.35rem;
       font-size: 1.9rem;
       color: var(--accent);
+    }
+
+    .stat-detail {
+      display: block;
+      margin-top: 0.45rem;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.4;
     }
 
     .table-shell {
@@ -130,10 +163,61 @@
       font-size: 0.85rem;
     }
 
+    .export-button {
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      background: var(--accent);
+      color: #f7f4ed;
+      padding: 0.65rem 1rem;
+      font: inherit;
+      cursor: pointer;
+      transition: background 160ms ease, transform 160ms ease;
+    }
+
+    .export-button:hover {
+      background: var(--accent-strong);
+      transform: translateY(-1px);
+    }
+
+    .export-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      transform: none;
+    }
+
+    .stale-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 4.5rem;
+      padding: 0.3rem 0.6rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.84rem;
+    }
+
+    .stale-chip.is-stale {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
     @media (max-width: 720px) {
+      main {
+        padding-inline: 0.85rem;
+      }
+
+      .headline {
+        padding: 1.15rem;
+      }
+
       th, td {
         padding: 0.75rem;
         font-size: 0.85rem;
+      }
+
+      .stat-value {
+        font-size: 1.65rem;
       }
     }
   </style>
@@ -142,22 +226,47 @@
   <main>
     <section class="hero">
       <div class="headline">
-        <div class="status-pill" id="connection-status">Connecting...</div>
-        <h1>Agrasandhani Baseline</h1>
-        <p>Forward-every-message mode with a live latest-per-sensor view and real latency instrumentation.</p>
+        <div class="headline-top">
+          <div class="status-pill" id="connection-status">Connecting...</div>
+          <div class="headline-actions">
+            <button class="export-button" id="export-button" type="button" disabled>Export display log</button>
+          </div>
+        </div>
+        <div class="headline-copy">
+          <h1>Agrasandhani Baseline</h1>
+          <p>Forward-every-message mode with live measurement counters, per-frame display timestamps, and browser-side CSV export.</p>
+        </div>
       </div>
       <div class="stats">
         <div class="stat-card">
           <span class="stat-label">Latest Rows</span>
           <span class="stat-value" id="row-count">0</span>
+          <span class="stat-detail">Current latest-per-sensor snapshot rows.</span>
         </div>
         <div class="stat-card">
           <span class="stat-label">Messages Seen</span>
           <span class="stat-value" id="message-count">0</span>
+          <span class="stat-detail" id="event-count-detail">0 display events captured this session.</span>
         </div>
         <div class="stat-card">
           <span class="stat-label">Last Update</span>
           <span class="stat-value" id="last-update">--</span>
+          <span class="stat-detail">Browser receive time of the most recent WebSocket frame.</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Update Rate</span>
+          <span class="stat-value" id="update-rate">0.00/s</span>
+          <span class="stat-detail">Rendered sensor updates per second over the last 5 seconds.</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Stale Count</span>
+          <span class="stat-value" id="stale-count">0</span>
+          <span class="stat-detail">Rows older than 1000 ms in the current snapshot.</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">WebSocket FPS</span>
+          <span class="stat-value" id="ws-fps">0.00/s</span>
+          <span class="stat-detail">Frames received per second over the last 5 seconds.</span>
         </div>
       </div>
     </section>
@@ -171,6 +280,7 @@
             <th>Value</th>
             <th>Msg ID</th>
             <th>Age (ms)</th>
+            <th>Stale</th>
             <th>Sent At</th>
           </tr>
         </thead>
@@ -180,13 +290,79 @@
   </main>
 
   <script>
+    const MEASUREMENT_WINDOW_MS = 5_000;
+    const STALE_THRESHOLD_MS = 1_000;
     const records = new Map();
+    const measurementEvents = [];
+    const frameReceiveTimes = [];
+    const updateTimes = [];
+
+    let frameCount = 0;
     let messageCount = 0;
     const connectionStatus = document.getElementById("connection-status");
+    const exportButton = document.getElementById("export-button");
     const rowCount = document.getElementById("row-count");
     const messageCountNode = document.getElementById("message-count");
+    const eventCountDetail = document.getElementById("event-count-detail");
     const lastUpdateNode = document.getElementById("last-update");
+    const updateRateNode = document.getElementById("update-rate");
+    const staleCountNode = document.getElementById("stale-count");
+    const wsFpsNode = document.getElementById("ws-fps");
     const sensorBody = document.getElementById("sensor-body");
+
+    const measurements = {
+      thresholdMs: STALE_THRESHOLD_MS,
+      events: measurementEvents,
+      summary: {
+        latestRowCount: 0,
+        messageCount: 0,
+        frameCount: 0,
+        staleCount: 0,
+        updateRatePerSecond: 0,
+        websocketFps: 0,
+        lastUpdateDisplay: null,
+        lastUpdateTimestampMs: null,
+      },
+      exportCsv() {
+        if (measurementEvents.length === 0) {
+          return "";
+        }
+
+        const header = [
+          "frame_index",
+          "sensor_id",
+          "metric_type",
+          "msg_id",
+          "ts_sent",
+          "ts_displayed",
+          "age_ms_at_display",
+          "stale_at_display",
+        ];
+        const lines = [header.join(",")];
+        for (const event of measurementEvents) {
+          lines.push([
+            event.frame_index,
+            csvValue(event.sensor_id),
+            csvValue(event.metric_type),
+            event.msg_id,
+            event.ts_sent,
+            event.ts_displayed,
+            event.age_ms_at_display,
+            event.stale_at_display,
+          ].join(","));
+        }
+        return lines.join("\n");
+      },
+    };
+    window.agrasandhaniMeasurements = measurements;
+
+    function csvValue(value) {
+      const text = String(value ?? "");
+      if (/[",\n]/.test(text)) {
+        return `"${text.replace(/"/g, "\"\"")}"`;
+      }
+      return text;
+    }
 
     function recordKey(message) {
       return `${message.sensor_id}::${message.metric_type}`;
@@ -197,7 +373,19 @@
       return date.toLocaleTimeString();
     }
 
+    function pruneWindow(entries, nowMs) {
+      while (entries.length > 0 && (nowMs - entries[0]) > MEASUREMENT_WINDOW_MS) {
+        entries.shift();
+      }
+    }
+
+    function computeRate(entries, nowMs) {
+      pruneWindow(entries, nowMs);
+      return entries.length / (MEASUREMENT_WINDOW_MS / 1_000);
+    }
+
     function renderRows() {
+      const nowMs = Date.now();
       const rows = [...records.values()].sort((left, right) => {
         const sensorCompare = String(left.sensor_id).localeCompare(String(right.sensor_id), undefined, { numeric: true });
         if (sensorCompare !== 0) {
@@ -206,22 +394,72 @@
         return left.metric_type.localeCompare(right.metric_type);
       });
 
-      sensorBody.innerHTML = rows.map((message) => {
-        const ageMs = Date.now() - message.ts_sent;
-        return `
+      let staleCount = 0;
+      const renderedRows = rows.map((message) => {
+        const ageMs = nowMs - message.ts_sent;
+        const isStale = ageMs > STALE_THRESHOLD_MS;
+        if (isStale) {
+          staleCount += 1;
+        }
+
+        return {
+          ...message,
+          ageMs,
+          isStale,
+        };
+      });
+
+      sensorBody.innerHTML = renderedRows.map((message) => `
           <tr>
             <td>${message.sensor_id}</td>
             <td>${message.metric_type}</td>
             <td>${message.value.toFixed(2)}</td>
             <td>${message.msg_id}</td>
-            <td>${ageMs}</td>
+            <td>${message.ageMs}</td>
+            <td><span class="stale-chip${message.isStale ? " is-stale" : ""}">${message.isStale ? "stale" : "fresh"}</span></td>
             <td>${formatTimestamp(message.ts_sent)}</td>
           </tr>
-        `;
-      }).join("");
+        `).join("");
 
-      rowCount.textContent = String(rows.length);
+      const updateRate = computeRate(updateTimes, nowMs);
+      const wsFps = computeRate(frameReceiveTimes, nowMs);
+
+      rowCount.textContent = String(renderedRows.length);
       messageCountNode.textContent = String(messageCount);
+      eventCountDetail.textContent = `${measurementEvents.length} display events captured this session.`;
+      staleCountNode.textContent = String(staleCount);
+      updateRateNode.textContent = `${updateRate.toFixed(2)}/s`;
+      wsFpsNode.textContent = `${wsFps.toFixed(2)}/s`;
+      exportButton.disabled = measurementEvents.length === 0;
+
+      measurements.summary.latestRowCount = renderedRows.length;
+      measurements.summary.messageCount = messageCount;
+      measurements.summary.frameCount = frameCount;
+      measurements.summary.staleCount = staleCount;
+      measurements.summary.updateRatePerSecond = Number(updateRate.toFixed(2));
+      measurements.summary.websocketFps = Number(wsFps.toFixed(2));
+      measurements.summary.lastUpdateDisplay = lastUpdateNode.textContent === "--" ? null : lastUpdateNode.textContent;
+      measurements.summary.lastUpdateTimestampMs = measurementEvents.length > 0
+        ? measurementEvents[measurementEvents.length - 1].ts_displayed
+        : null;
+    }
+
+    function downloadMeasurements() {
+      const csvText = measurements.exportCsv();
+      if (!csvText) {
+        return;
+      }
+
+      const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+      const blobUrl = URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      downloadLink.href = blobUrl;
+      downloadLink.download = `agrasandhani-display-events-${timestamp}.csv`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      URL.revokeObjectURL(blobUrl);
     }
 
     function connect() {
@@ -234,9 +472,30 @@
 
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data);
-        records.set(recordKey(message), message);
+        const displayTimeMs = Date.now();
+        const ageMs = displayTimeMs - message.ts_sent;
+        const staleAtDisplay = ageMs > STALE_THRESHOLD_MS;
+
+        frameCount += 1;
         messageCount += 1;
-        lastUpdateNode.textContent = formatTimestamp(Date.now());
+        frameReceiveTimes.push(displayTimeMs);
+        updateTimes.push(displayTimeMs);
+        pruneWindow(frameReceiveTimes, displayTimeMs);
+        pruneWindow(updateTimes, displayTimeMs);
+
+        records.set(recordKey(message), message);
+        measurementEvents.push({
+          frame_index: frameCount,
+          sensor_id: message.sensor_id,
+          metric_type: message.metric_type,
+          msg_id: message.msg_id,
+          ts_sent: message.ts_sent,
+          ts_displayed: displayTimeMs,
+          age_ms_at_display: ageMs,
+          stale_at_display: staleAtDisplay,
+        });
+
+        lastUpdateNode.textContent = formatTimestamp(displayTimeMs);
         renderRows();
       });
 
@@ -246,7 +505,9 @@
       });
     }
 
+    exportButton.addEventListener("click", downloadMeasurements);
     window.setInterval(renderRows, 500);
+    renderRows();
     connect();
   </script>
 </body>

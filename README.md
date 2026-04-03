@@ -1,6 +1,6 @@
 # Agrasandhani
 
-Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets into a minimal dashboard. This branch implements the MVP foundation only: CSV replay publisher -> Mosquitto -> Python gateway -> WebSocket -> static UI, with real counters and per-message CSV logging for later experiments.
+Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets into a minimal dashboard. This branch implements the MVP foundation only: CSV replay publisher -> Mosquitto -> Python gateway -> WebSocket -> static UI, with real counters, browser-side display measurements, and per-message CSV logging for later experiments.
 
 ## Stack
 
@@ -23,7 +23,7 @@ Agrasandhani is a local MQTT-to-WebSocket baseline for replaying sensor datasets
 - `gateway/mqtt_ingest.py`: MQTT subscriber that pushes broker messages into an internal queue
 - `gateway/forwarder.py`: baseline forward-every-message path, latest snapshot map, and CSV run logger
 - `gateway/schemas.py`: shared payload validation
-- `ui/index.html`: minimal dashboard
+- `ui/index.html`: dashboard with live measurement counters and display-event CSV export
 - `experiments/run_one.ps1`: standard 60s run harness
 - `experiments/run_one.sh`: standard 60s run harness for macOS/Linux
 
@@ -255,7 +255,16 @@ Expected result:
 - the UI updates with sensor rows
 - `/health` returns `status: ok`
 - `/metrics` shows non-zero `mqtt_in_msgs` and `latest_sensor_count`
+- the dashboard shows non-zero `Update Rate` and `WebSocket FPS` under traffic
+- the dashboard records display-side timing events and can export them as CSV
 - `experiments/logs/<RUN_ID>/gateway_forward_log.csv` contains one row per forwarded message
+
+UI measurement notes:
+
+- `Stale Count` uses a fixed UI threshold of `1000` ms for baseline measurement only
+- `window.agrasandhaniMeasurements.summary` exposes the current dashboard counters for inspection
+- `window.agrasandhaniMeasurements.events` contains the in-memory per-frame display log
+- `window.agrasandhaniMeasurements.exportCsv()` returns the same CSV content used by the export button
 
 Useful checks:
 
