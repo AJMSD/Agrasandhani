@@ -1,0 +1,12 @@
+{
+  "name": "agrasandhani-experiments",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright automation for Agrasandhani M4 experiments",
+  "scripts": {
+    "capture-dashboard": "node experiments/capture_dashboard.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.52.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "bandwidth_200kbps",
+  "phases": [
+    {
+      "name": "bandwidth-cap",
+      "duration_s": 60,
+      "loss_rate": 0.0,
+      "delay_ms": 0,
+      "jitter_ms": 0,
+      "bandwidth_bps": 25000,
+      "outage": false
+    }
+  ]
+}

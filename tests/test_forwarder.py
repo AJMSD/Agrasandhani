@@ -114,7 +114,7 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_v2_suppresses_exact_duplicates(self) -> None:
         forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
-            config=ForwarderConfig(mode="v2", batch_window_ms=1_000, batch_max_messages=5)
+            config=ForwarderConfig(mode="v2", batch_window_ms=1_000, batch_max_messages=5, duplicate_ttl_ms=1_000)
         )
 
         task = asyncio.create_task(forwarder.run_forever())
@@ -143,6 +143,34 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
 
         metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
         self.assertEqual(metrics["duplicates_dropped"], 1)
+        run_logger.close()
+
+    async def test_v2_allows_same_duplicate_key_after_ttl_expiry(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v2", batch_window_ms=1_000, batch_max_messages=5, duplicate_ttl_ms=10)
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        await inbound_queue.put(make_envelope(msg_id=8, value=22.0))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await forwarder._flush_pending(flush_reason="threshold")
+
+        await asyncio.sleep(0.03)
+
+        await inbound_queue.put(make_envelope(msg_id=8, value=22.0, received_at_ms=1_700_000_000_205))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await forwarder._flush_pending(flush_reason="threshold")
+        await self._stop_task(task)
+
+        self.assertEqual(len(websocket.messages), 2)
+        second_frame = json.loads(websocket.messages[1])
+        self.assertEqual(second_frame["update_count"], 1)
+        self.assertEqual(second_frame["updates"][0]["msg_id"], 8)
+
+        metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
+        self.assertEqual(metrics["duplicates_dropped"], 0)
+        self.assertEqual(metrics["dedup_cache_size"], 1)
+        self.assertGreaterEqual(metrics["dedup_cache_evictions"], 1)
         run_logger.close()
 
     async def test_v2_compacts_to_latest_per_sensor_metric(self) -> None:
@@ -323,12 +351,19 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_runtime_config_update_applies_safe_fields(self) -> None:
         forwarder, _, _, _, run_logger = await self._build_forwarder(
-            config=ForwarderConfig(mode="v4", batch_window_ms=200, batch_max_messages=5, freshness_ttl_ms=1_000)
+            config=ForwarderConfig(
+                mode="v4",
+                batch_window_ms=200,
+                batch_max_messages=5,
+                duplicate_ttl_ms=30_000,
+                freshness_ttl_ms=1_000,
+            )
         )
 
         snapshot = forwarder.update_runtime_config(
             {
                 "batch_window_ms": 300,
+                "duplicate_ttl_ms": 5_000,
                 "freshness_ttl_ms": 1_500,
                 "adaptive_max_batch_window_ms": 1_500,
             }
@@ -336,6 +371,7 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot["mode"], "v4")
         self.assertEqual(snapshot["batch_window_ms"], 300)
+        self.assertEqual(snapshot["duplicate_ttl_ms"], 5_000)
         self.assertEqual(snapshot["freshness_ttl_ms"], 1_500)
         self.assertEqual(snapshot["effective_batch_window_ms"], 300)
         self.assertEqual(snapshot["adaptive_max_batch_window_ms"], 1_500)

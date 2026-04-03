@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "delay_50ms_jitter20ms",
+  "phases": [
+    {
+      "name": "delay-jitter",
+      "duration_s": 60,
+      "loss_rate": 0.0,
+      "delay_ms": 50,
+      "jitter_ms": 20,
+      "bandwidth_bps": null,
+      "outage": false
+    }
+  ]
+}

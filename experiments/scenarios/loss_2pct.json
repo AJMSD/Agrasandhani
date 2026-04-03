@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "loss_2pct",
+  "phases": [
+    {
+      "name": "loss-2pct",
+      "duration_s": 60,
+      "loss_rate": 0.02,
+      "delay_ms": 0,
+      "jitter_ms": 0,
+      "bandwidth_bps": null,
+      "outage": false
+    }
+  ]
+}

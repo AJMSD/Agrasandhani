@@ -24,6 +24,7 @@ class AppEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["mode"], "v4")
         self.assertEqual(payload["batch_window_ms"], 250)
+        self.assertEqual(payload["duplicate_ttl_ms"], 30_000)
         self.assertEqual(payload["freshness_ttl_ms"], 1_000)
         self.assertEqual(payload["effective_batch_window_ms"], 250)
 
@@ -37,12 +38,14 @@ class AppEndpointTests(unittest.IsolatedAsyncioTestCase):
         payload = await gateway_app.patch_config(
             gateway_app.RuntimeConfigUpdate(
                 batch_window_ms=300,
+                duplicate_ttl_ms=5_000,
                 freshness_ttl_ms=1_500,
                 adaptive_max_batch_window_ms=1_500,
             )
         )
 
         self.assertEqual(payload["batch_window_ms"], 300)
+        self.assertEqual(payload["duplicate_ttl_ms"], 5_000)
         self.assertEqual(payload["freshness_ttl_ms"], 1_500)
         self.assertEqual(payload["adaptive_max_batch_window_ms"], 1_500)
         self.assertEqual(payload["effective_batch_window_ms"], 300)
@@ -68,6 +71,8 @@ class AppEndpointTests(unittest.IsolatedAsyncioTestCase):
         payload = await gateway_app.metrics()
 
         self.assertEqual(payload["gateway_mode"], "v4")
+        self.assertIn("dedup_cache_size", payload)
+        self.assertIn("dedup_cache_evictions", payload)
         self.assertIn("effective_batch_window_ms", payload)
         self.assertIn("adaptive_enabled", payload)
         self.assertIn("stale_sensor_count", payload)

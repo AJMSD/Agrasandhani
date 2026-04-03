@@ -30,6 +30,7 @@ class ForwarderConfig:
     mode: GatewayMode = "v0"
     batch_window_ms: int = 250
     batch_max_messages: int = 50
+    duplicate_ttl_ms: int = 30_000
     value_dedup_enabled: bool = False
     freshness_ttl_ms: int = 1_000
     adaptive_min_batch_window_ms: int = 10
@@ -45,6 +46,7 @@ class ForwarderConfig:
         positive_int_fields = {
             "batch_window_ms": self.batch_window_ms,
             "batch_max_messages": self.batch_max_messages,
+            "duplicate_ttl_ms": self.duplicate_ttl_ms,
             "freshness_ttl_ms": self.freshness_ttl_ms,
             "adaptive_min_batch_window_ms": self.adaptive_min_batch_window_ms,
             "adaptive_max_batch_window_ms": self.adaptive_max_batch_window_ms,
@@ -80,6 +82,7 @@ class Metrics:
     compacted_dropped: int = 0
     value_dedup_dropped: int = 0
     invalid_msgs: int = 0
+    dedup_cache_evictions: int = 0
     adaptive_window_increase_events: int = 0
     adaptive_window_decrease_events: int = 0
 
@@ -96,6 +99,7 @@ class CsvRunLogger:
         "frame_size",
         "frame_payload_bytes",
         "sensor_id",
+        "metric_type",
         "msg_id",
         "ts_sent",
         "ts_recv_gateway",
@@ -139,6 +143,7 @@ class CsvRunLogger:
                 frame_size,
                 frame_payload_bytes,
                 message.sensor_id,
+                message.metric_type,
                 message.msg_id,
                 message.ts_sent,
                 ts_recv_gateway,
@@ -162,6 +167,7 @@ class BaselineForwarder:
     RUNTIME_TUNABLE_FIELDS = {
         "batch_window_ms",
         "batch_max_messages",
+        "duplicate_ttl_ms",
         "value_dedup_enabled",
         "freshness_ttl_ms",
         "adaptive_min_batch_window_ms",
@@ -192,7 +198,7 @@ class BaselineForwarder:
         self._pending_latest: dict[tuple[str, str], BufferedUpdate] = {}
         self._pending_started_at: float | None = None
         self._next_frame_id = 1
-        self._seen_message_keys: set[tuple[str, int]] = set()
+        self._seen_message_keys: dict[tuple[str, int], float] = {}
         self._effective_batch_window_ms = self._config.batch_window_ms
         self._healthy_flush_streak = 0
         self._last_adaptation_reason = "steady:startup"
@@ -215,6 +221,7 @@ class BaselineForwarder:
             "batch_window_ms": self._config.batch_window_ms,
             "effective_batch_window_ms": self._current_batch_window_ms(),
             "batch_max_messages": self._config.batch_max_messages,
+            "duplicate_ttl_ms": self._config.duplicate_ttl_ms,
             "value_dedup_enabled": self._config.value_dedup_enabled,
             "freshness_ttl_ms": self._config.freshness_ttl_ms,
             "adaptive_enabled": self._uses_adaptive_window(),
@@ -292,6 +299,7 @@ class BaselineForwarder:
                 self._queue.task_done()
 
     def metrics_snapshot(self, *, started_at_monotonic: float) -> dict[str, int | float | str | bool]:
+        self._prune_seen_message_keys()
         return {
             "gateway_mode": self._config.mode,
             "mqtt_in_msgs": self._metrics.mqtt_in_msgs,
@@ -304,6 +312,8 @@ class BaselineForwarder:
             "compacted_dropped": self._metrics.compacted_dropped,
             "value_dedup_dropped": self._metrics.value_dedup_dropped,
             "invalid_msgs": self._metrics.invalid_msgs,
+            "dedup_cache_size": len(self._seen_message_keys),
+            "dedup_cache_evictions": self._metrics.dedup_cache_evictions,
             "adaptive_window_increase_events": self._metrics.adaptive_window_increase_events,
             "adaptive_window_decrease_events": self._metrics.adaptive_window_decrease_events,
             "connected_clients": self.connected_clients,
@@ -320,6 +330,7 @@ class BaselineForwarder:
     async def _handle_envelope(self, envelope: MqttEnvelope) -> None:
         self._metrics.mqtt_in_msgs += 1
         self._metrics.mqtt_in_bytes += len(envelope.payload)
+        self._prune_seen_message_keys()
 
         try:
             payload = json.loads(envelope.payload.decode("utf-8"))
@@ -333,7 +344,7 @@ class BaselineForwarder:
             await self._emit_single(envelope=envelope, message=message)
             return
 
-        if self._uses_compaction() and message.duplicate_key() in self._seen_message_keys:
+        if self._uses_compaction() and self._is_recent_duplicate(message):
             self._metrics.duplicates_dropped += 1
             return
 
@@ -386,6 +397,32 @@ class BaselineForwarder:
             return
 
         self._metrics.compacted_dropped += 1
+
+    def _is_recent_duplicate(self, message: SensorMessage) -> bool:
+        seen_at = self._seen_message_keys.get(message.duplicate_key())
+        if seen_at is None:
+            return False
+        return (time.monotonic() - seen_at) * 1_000 <= self._config.duplicate_ttl_ms
+
+    def _mark_duplicate_key_seen(self, message: SensorMessage) -> None:
+        self._seen_message_keys[message.duplicate_key()] = time.monotonic()
+
+    def _prune_seen_message_keys(self) -> None:
+        if not self._seen_message_keys:
+            return
+
+        now = time.monotonic()
+        expired_keys = [
+            key
+            for key, seen_at in self._seen_message_keys.items()
+            if (now - seen_at) * 1_000 > self._config.duplicate_ttl_ms
+        ]
+        if not expired_keys:
+            return
+
+        for key in expired_keys:
+            self._seen_message_keys.pop(key, None)
+        self._metrics.dedup_cache_evictions += len(expired_keys)
 
     def _pending_update_count(self) -> int:
         if self._uses_compaction():
@@ -476,7 +513,7 @@ class BaselineForwarder:
             self._latest_by_sensor[key] = message
             self._last_emitted_by_sensor[key] = message
             if self._uses_compaction():
-                self._seen_message_keys.add(message.duplicate_key())
+                self._mark_duplicate_key_seen(message)
             self._run_logger.log_update(
                 mode=self._config.mode,
                 frame_id=frame_id,

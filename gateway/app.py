@@ -33,6 +33,7 @@ class Settings:
     gateway_mode: GatewayMode
     batch_window_ms: int
     batch_max_messages: int
+    duplicate_ttl_ms: int
     value_dedup_enabled: bool
     freshness_ttl_ms: int
     adaptive_min_batch_window_ms: int
@@ -62,6 +63,7 @@ class RuntimeConfigUpdate(BaseModel):
     mode: GatewayMode | None = None
     batch_window_ms: int | None = None
     batch_max_messages: int | None = None
+    duplicate_ttl_ms: int | None = None
     value_dedup_enabled: bool | None = None
     freshness_ttl_ms: int | None = None
     adaptive_min_batch_window_ms: int | None = None
@@ -89,6 +91,7 @@ def load_settings() -> Settings:
         gateway_mode=gateway_mode,
         batch_window_ms=int(os.getenv("BATCH_WINDOW_MS", "250")),
         batch_max_messages=int(os.getenv("BATCH_MAX_MESSAGES", "50")),
+        duplicate_ttl_ms=int(os.getenv("DUPLICATE_TTL_MS", "30000")),
         value_dedup_enabled=os.getenv("VALUE_DEDUP_ENABLED", "0") == "1",
         freshness_ttl_ms=int(os.getenv("FRESHNESS_TTL_MS", "1000")),
         adaptive_min_batch_window_ms=int(os.getenv("ADAPTIVE_MIN_BATCH_WINDOW_MS", "10")),
@@ -122,6 +125,7 @@ async def lifespan(app: FastAPI):
             mode=settings.gateway_mode,
             batch_window_ms=settings.batch_window_ms,
             batch_max_messages=settings.batch_max_messages,
+            duplicate_ttl_ms=settings.duplicate_ttl_ms,
             value_dedup_enabled=settings.value_dedup_enabled,
             freshness_ttl_ms=settings.freshness_ttl_ms,
             adaptive_min_batch_window_ms=settings.adaptive_min_batch_window_ms,

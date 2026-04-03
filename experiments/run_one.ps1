@@ -47,6 +47,7 @@ $runId = Get-Setting -Name "RUN_ID" -DefaultValue (Get-Date -Format "yyyyMMdd-HH
 $gatewayMode = Get-Setting -Name "GATEWAY_MODE" -DefaultValue "v0"
 $batchWindowMs = Get-Setting -Name "BATCH_WINDOW_MS" -DefaultValue "250"
 $batchMaxMessages = Get-Setting -Name "BATCH_MAX_MESSAGES" -DefaultValue "50"
+$duplicateTtlMs = Get-Setting -Name "DUPLICATE_TTL_MS" -DefaultValue "30000"
 $valueDedupEnabled = Get-Setting -Name "VALUE_DEDUP_ENABLED" -DefaultValue "0"
 $freshnessTtlMs = Get-Setting -Name "FRESHNESS_TTL_MS" -DefaultValue "1000"
 $adaptiveMinBatchWindowMs = Get-Setting -Name "ADAPTIVE_MIN_BATCH_WINDOW_MS" -DefaultValue "10"
@@ -66,7 +67,7 @@ $burstDurationS = Get-Setting -Name "BURST_DURATION_S" -DefaultValue "0"
 $burstSpeedMultiplier = Get-Setting -Name "BURST_SPEED_MULTIPLIER" -DefaultValue "5.0"
 
 if (-not (Test-TcpPort -TargetHost $mqttHost -Port $mqttPort)) {
-    throw "MQTT broker is not reachable at ${mqttHost}:${mqttPort}. Start Mosquitto before running this script."
+    throw "MQTT broker is not reachable at ${mqttHost}:${mqttPort}. Start Mosquitto before running this script. On Windows the default broker path is 'C:\\Program Files\\mosquitto\\mosquitto.exe'."
 }
 
 $runDir = Join-Path $repoRoot "experiments\logs\$runId"
@@ -89,6 +90,7 @@ Set-Location '$repoRoot'
 `$env:GATEWAY_MODE = '$gatewayMode'
 `$env:BATCH_WINDOW_MS = '$batchWindowMs'
 `$env:BATCH_MAX_MESSAGES = '$batchMaxMessages'
+`$env:DUPLICATE_TTL_MS = '$duplicateTtlMs'
 `$env:VALUE_DEDUP_ENABLED = '$valueDedupEnabled'
 `$env:FRESHNESS_TTL_MS = '$freshnessTtlMs'
 `$env:ADAPTIVE_MIN_BATCH_WINDOW_MS = '$adaptiveMinBatchWindowMs'
