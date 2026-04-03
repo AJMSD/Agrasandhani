@@ -61,7 +61,7 @@ class MQTTIngestor:
             self._client.loop_stop()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
-        self._is_connected = not bool(reason_code)
+        self._is_connected = self._is_success(reason_code)
         if self._is_connected:
             LOGGER.info("Subscribed to sensors/raw/# with QoS %s", self._qos)
             client.subscribe("sensors/raw/#", qos=self._qos)
@@ -71,6 +71,10 @@ class MQTTIngestor:
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
         self._is_connected = False
+        if self._is_success(reason_code):
+            LOGGER.info("MQTT client disconnected with reason code %s", reason_code)
+            return
+
         LOGGER.warning("MQTT client disconnected with reason code %s", reason_code)
 
     def _on_message(self, client, userdata, message) -> None:
@@ -80,3 +84,10 @@ class MQTTIngestor:
             received_at_ms=time.time_ns() // 1_000_000,
         )
         self._loop.call_soon_threadsafe(self._queue.put_nowait, envelope)
+
+    @staticmethod
+    def _is_success(reason_code) -> bool:
+        try:
+            return int(reason_code) == 0
+        except (TypeError, ValueError):
+            return str(reason_code).lower() == "success"
