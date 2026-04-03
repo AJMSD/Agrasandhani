@@ -43,6 +43,10 @@ RUN_ID="$(get_setting RUN_ID "$(date +%Y%m%d-%H%M%S)")"
 REPLAY_SPEED="$(get_setting REPLAY_SPEED 1.0)"
 SENSOR_LIMIT="$(get_setting SENSOR_LIMIT 0)"
 DURATION_S="$(get_setting DURATION_S 60)"
+BURST_ENABLED="$(get_setting BURST_ENABLED 0)"
+BURST_START_S="$(get_setting BURST_START_S 0)"
+BURST_DURATION_S="$(get_setting BURST_DURATION_S 0)"
+BURST_SPEED_MULTIPLIER="$(get_setting BURST_SPEED_MULTIPLIER 5.0)"
 
 if ! test_tcp_port "$MQTT_HOST" "$MQTT_PORT"; then
   echo "MQTT broker is not reachable at ${MQTT_HOST}:${MQTT_PORT}. Start Mosquitto before running this script." >&2
@@ -82,7 +86,7 @@ fi
 
 (
   cd "$REPO_ROOT"
-  export MQTT_HOST MQTT_PORT MQTT_QOS REPLAY_SPEED SENSOR_LIMIT DURATION_S RUN_ID
+  export MQTT_HOST MQTT_PORT MQTT_QOS REPLAY_SPEED SENSOR_LIMIT DURATION_S BURST_ENABLED BURST_START_S BURST_DURATION_S BURST_SPEED_MULTIPLIER RUN_ID
   python ./simulator/replay_publisher.py --data-file ./simulator/sample_data.csv
 ) >"$SIMULATOR_STDOUT" 2>"$SIMULATOR_STDERR"
 

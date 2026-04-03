@@ -45,6 +45,10 @@ $runId = Get-Setting -Name "RUN_ID" -DefaultValue (Get-Date -Format "yyyyMMdd-HH
 $replaySpeed = Get-Setting -Name "REPLAY_SPEED" -DefaultValue "1.0"
 $sensorLimit = Get-Setting -Name "SENSOR_LIMIT" -DefaultValue "0"
 $durationS = [int](Get-Setting -Name "DURATION_S" -DefaultValue "60")
+$burstEnabled = Get-Setting -Name "BURST_ENABLED" -DefaultValue "0"
+$burstStartS = Get-Setting -Name "BURST_START_S" -DefaultValue "0"
+$burstDurationS = Get-Setting -Name "BURST_DURATION_S" -DefaultValue "0"
+$burstSpeedMultiplier = Get-Setting -Name "BURST_SPEED_MULTIPLIER" -DefaultValue "5.0"
 
 if (-not (Test-TcpPort -Host $mqttHost -Port $mqttPort)) {
     throw "MQTT broker is not reachable at ${mqttHost}:${mqttPort}. Start Mosquitto before running this script."
@@ -78,6 +82,10 @@ Set-Location '$repoRoot'
 `$env:REPLAY_SPEED = '$replaySpeed'
 `$env:SENSOR_LIMIT = '$sensorLimit'
 `$env:DURATION_S = '$durationS'
+`$env:BURST_ENABLED = '$burstEnabled'
+`$env:BURST_START_S = '$burstStartS'
+`$env:BURST_DURATION_S = '$burstDurationS'
+`$env:BURST_SPEED_MULTIPLIER = '$burstSpeedMultiplier'
 `$env:RUN_ID = '$runId'
 python .\simulator\replay_publisher.py --data-file .\simulator\sample_data.csv
 "@

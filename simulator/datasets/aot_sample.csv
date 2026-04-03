@@ -1,0 +1,6 @@
+sensor_id,msg_id,ts_sent,metric_type,value
+node-a,1,1704088800000,temperature,21.5
+node-a,2,1704088805000,humidity,45.2
+node-a,3,1704088810000,temperature,22.0
+node-b,1,1704088815000,temperature,18.0
+node-b,2,1704088825000,humidity,47.0

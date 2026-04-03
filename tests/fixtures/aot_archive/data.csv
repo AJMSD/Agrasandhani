@@ -1,0 +1,9 @@
+timestamp,node_id,subsystem,sensor,parameter,value_hrf,value_raw
+2024/01/01 00:00:00,node-a,metsense,bme680,temperature,21.5,2150
+2024/01/01 00:00:05,node-a,metsense,htu21d,humidity,45.2,4520
+2024/01/01 00:00:10,node-a,metsense,bme680,temperature,22.0,2200
+2024/01/01 00:00:15,node-b,metsense,bme680,temperature,18.0,1800
+2024/01/01 00:00:20,node-b,metsense,htu21d,humidity,,4000
+2024/01/01 00:00:25,node-b,metsense,htu21d,humidity,47.0,4700
+2024/01/01 00:00:30,node-a,metsense,bmp180,pressure,1001.2,100120
+2024/01/01 00:00:35,node-a,metsense,bme680,temperature,not-a-number,0

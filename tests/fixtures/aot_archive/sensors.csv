@@ -1,0 +1,4 @@
+subsystem,sensor,parameter,units
+metsense,bme680,temperature,C
+metsense,htu21d,humidity,percent
+metsense,bmp180,pressure,hPa

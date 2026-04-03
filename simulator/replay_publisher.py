@@ -10,11 +10,25 @@ from pathlib import Path
 
 from paho.mqtt import client as mqtt_client
 
+try:
+    from simulator.replay_timing import BurstConfig, compute_target_offset_s
+except ModuleNotFoundError:  # pragma: no cover - script entrypoint fallback
+    from replay_timing import BurstConfig, compute_target_offset_s
+
 LOGGER = logging.getLogger(__name__)
 
 
 def env_default(name: str, fallback: str) -> str:
     return os.getenv(name, fallback)
+
+
+def env_default_bool(name: str, fallback: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return fallback
+
+    normalized = raw_value.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,6 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-s", type=int, default=int(env_default("DURATION_S", "0")))
     parser.add_argument("--run-id", default=env_default("RUN_ID", "dev"))
     parser.add_argument("--max-messages", type=int, default=0, help="Stop after publishing N messages")
+    parser.add_argument(
+        "--burst-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=env_default_bool("BURST_ENABLED", False),
+        help="Enable a scripted replay-speed burst window",
+    )
+    parser.add_argument("--burst-start-s", type=float, default=float(env_default("BURST_START_S", "0")))
+    parser.add_argument("--burst-duration-s", type=float, default=float(env_default("BURST_DURATION_S", "0")))
+    parser.add_argument(
+        "--burst-speed-multiplier",
+        type=float,
+        default=float(env_default("BURST_SPEED_MULTIPLIER", "5.0")),
+    )
     return parser.parse_args()
 
 
@@ -79,6 +106,7 @@ def publish_rows(
     replay_speed: float,
     duration_s: int,
     max_messages: int,
+    burst: BurstConfig,
 ) -> int:
     if not rows:
         LOGGER.warning("No rows available for replay")
@@ -96,7 +124,12 @@ def publish_rows(
             break
 
         relative_ms = int(row["ts_sent"]) - source_start_ms
-        target_monotonic = replay_start_monotonic + (relative_ms / 1_000.0) / max(replay_speed, 0.001)
+        target_offset_s = compute_target_offset_s(
+            relative_ms=relative_ms,
+            replay_speed=replay_speed,
+            burst=burst,
+        )
+        target_monotonic = replay_start_monotonic + target_offset_s
         if deadline_monotonic is not None and target_monotonic > deadline_monotonic:
             break
 
@@ -133,6 +166,21 @@ def main() -> None:
         args.run_id,
         sensor_count,
     )
+    burst = BurstConfig(
+        enabled=args.burst_enabled,
+        start_s=max(args.burst_start_s, 0.0),
+        duration_s=max(args.burst_duration_s, 0.0),
+        speed_multiplier=max(args.burst_speed_multiplier, 1.0),
+    )
+    LOGGER.info(
+        "Replay settings: speed=%sx duration_s=%s burst_enabled=%s burst_start_s=%s burst_duration_s=%s burst_speed_multiplier=%s",
+        args.replay_speed,
+        args.duration_s,
+        burst.enabled,
+        burst.start_s,
+        burst.duration_s,
+        burst.speed_multiplier,
+    )
 
     client = mqtt_client.Client(
         mqtt_client.CallbackAPIVersion.VERSION2,
@@ -148,6 +196,7 @@ def main() -> None:
             replay_speed=args.replay_speed,
             duration_s=args.duration_s,
             max_messages=args.max_messages,
+            burst=burst,
         )
     finally:
         client.disconnect()
