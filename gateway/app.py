@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict
 
 from gateway.forwarder import BaselineForwarder, CsvRunLogger, ForwarderConfig, GatewayMode
 from gateway.mqtt_ingest import MQTTIngestor
@@ -33,6 +34,15 @@ class Settings:
     batch_window_ms: int
     batch_max_messages: int
     value_dedup_enabled: bool
+    freshness_ttl_ms: int
+    adaptive_min_batch_window_ms: int
+    adaptive_max_batch_window_ms: int
+    adaptive_step_up_ms: int
+    adaptive_step_down_ms: int
+    adaptive_queue_high_watermark: int
+    adaptive_queue_low_watermark: int
+    adaptive_send_slow_ms: int
+    adaptive_recovery_streak: int
 
 
 @dataclass(slots=True)
@@ -46,10 +56,28 @@ class AppServices:
     forwarder_task: asyncio.Task
 
 
+class RuntimeConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: GatewayMode | None = None
+    batch_window_ms: int | None = None
+    batch_max_messages: int | None = None
+    value_dedup_enabled: bool | None = None
+    freshness_ttl_ms: int | None = None
+    adaptive_min_batch_window_ms: int | None = None
+    adaptive_max_batch_window_ms: int | None = None
+    adaptive_step_up_ms: int | None = None
+    adaptive_step_down_ms: int | None = None
+    adaptive_queue_high_watermark: int | None = None
+    adaptive_queue_low_watermark: int | None = None
+    adaptive_send_slow_ms: int | None = None
+    adaptive_recovery_streak: int | None = None
+
+
 def load_settings() -> Settings:
     gateway_mode = os.getenv("GATEWAY_MODE", "v0")
-    if gateway_mode not in {"v0", "v1", "v2"}:
-        raise ValueError(f"Unsupported GATEWAY_MODE '{gateway_mode}'. Expected one of v0, v1, v2.")
+    if gateway_mode not in {"v0", "v1", "v2", "v3", "v4"}:
+        raise ValueError(f"Unsupported GATEWAY_MODE '{gateway_mode}'. Expected one of v0, v1, v2, v3, v4.")
 
     return Settings(
         mqtt_host=os.getenv("MQTT_HOST", "127.0.0.1"),
@@ -62,6 +90,15 @@ def load_settings() -> Settings:
         batch_window_ms=int(os.getenv("BATCH_WINDOW_MS", "250")),
         batch_max_messages=int(os.getenv("BATCH_MAX_MESSAGES", "50")),
         value_dedup_enabled=os.getenv("VALUE_DEDUP_ENABLED", "0") == "1",
+        freshness_ttl_ms=int(os.getenv("FRESHNESS_TTL_MS", "1000")),
+        adaptive_min_batch_window_ms=int(os.getenv("ADAPTIVE_MIN_BATCH_WINDOW_MS", "10")),
+        adaptive_max_batch_window_ms=int(os.getenv("ADAPTIVE_MAX_BATCH_WINDOW_MS", "1000")),
+        adaptive_step_up_ms=int(os.getenv("ADAPTIVE_STEP_UP_MS", "100")),
+        adaptive_step_down_ms=int(os.getenv("ADAPTIVE_STEP_DOWN_MS", "50")),
+        adaptive_queue_high_watermark=int(os.getenv("ADAPTIVE_QUEUE_HIGH_WATERMARK", "25")),
+        adaptive_queue_low_watermark=int(os.getenv("ADAPTIVE_QUEUE_LOW_WATERMARK", "5")),
+        adaptive_send_slow_ms=int(os.getenv("ADAPTIVE_SEND_SLOW_MS", "40")),
+        adaptive_recovery_streak=int(os.getenv("ADAPTIVE_RECOVERY_STREAK", "3")),
     )
 
 
@@ -86,6 +123,15 @@ async def lifespan(app: FastAPI):
             batch_window_ms=settings.batch_window_ms,
             batch_max_messages=settings.batch_max_messages,
             value_dedup_enabled=settings.value_dedup_enabled,
+            freshness_ttl_ms=settings.freshness_ttl_ms,
+            adaptive_min_batch_window_ms=settings.adaptive_min_batch_window_ms,
+            adaptive_max_batch_window_ms=settings.adaptive_max_batch_window_ms,
+            adaptive_step_up_ms=settings.adaptive_step_up_ms,
+            adaptive_step_down_ms=settings.adaptive_step_down_ms,
+            adaptive_queue_high_watermark=settings.adaptive_queue_high_watermark,
+            adaptive_queue_low_watermark=settings.adaptive_queue_low_watermark,
+            adaptive_send_slow_ms=settings.adaptive_send_slow_ms,
+            adaptive_recovery_streak=settings.adaptive_recovery_streak,
         ),
     )
     mqtt_ingestor = MQTTIngestor(
@@ -137,9 +183,24 @@ async def health() -> dict[str, object]:
 
 
 @app.get("/metrics")
-async def metrics() -> dict[str, int | float | str]:
+async def metrics() -> dict[str, int | float | str | bool]:
     services: AppServices = app.state.services
     return services.forwarder.metrics_snapshot(started_at_monotonic=services.started_at_monotonic)
+
+
+@app.get("/config")
+async def get_config() -> dict[str, int | str | bool]:
+    services: AppServices = app.state.services
+    return services.forwarder.runtime_config_snapshot()
+
+
+@app.patch("/config")
+async def patch_config(config_update: RuntimeConfigUpdate) -> dict[str, int | str | bool]:
+    services: AppServices = app.state.services
+    try:
+        return services.forwarder.update_runtime_config(config_update.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.websocket("/ws")

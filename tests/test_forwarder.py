@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -187,6 +188,120 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["value_dedup_dropped"], 1)
         run_logger.close()
 
+    async def test_v3_adapts_batch_window_up_on_backlog(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(
+                mode="v3",
+                batch_window_ms=100,
+                batch_max_messages=1,
+                adaptive_min_batch_window_ms=100,
+                adaptive_max_batch_window_ms=300,
+                adaptive_step_up_ms=50,
+                adaptive_step_down_ms=50,
+                adaptive_queue_high_watermark=1,
+                adaptive_queue_low_watermark=0,
+                adaptive_send_slow_ms=1_000,
+                adaptive_recovery_streak=2,
+            )
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        await inbound_queue.put(make_envelope(msg_id=1, value=21.0))
+        await inbound_queue.put(make_envelope(msg_id=2, value=22.0, received_at_ms=1_700_000_000_240))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await self._wait_for_messages(websocket, expected=2)
+        await self._stop_task(task)
+
+        metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
+        self.assertEqual(metrics["gateway_mode"], "v3")
+        self.assertEqual(metrics["adaptive_window_increase_events"], 1)
+        self.assertEqual(metrics["effective_batch_window_ms"], 150)
+        self.assertTrue(str(metrics["last_adaptation_reason"]).startswith("healthy_streak="))
+        run_logger.close()
+
+    async def test_v3_recovers_batch_window_after_healthy_flush(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(
+                mode="v3",
+                batch_window_ms=100,
+                batch_max_messages=1,
+                adaptive_min_batch_window_ms=100,
+                adaptive_max_batch_window_ms=300,
+                adaptive_step_up_ms=50,
+                adaptive_step_down_ms=50,
+                adaptive_queue_high_watermark=1,
+                adaptive_queue_low_watermark=0,
+                adaptive_send_slow_ms=1_000,
+                adaptive_recovery_streak=1,
+            )
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        await inbound_queue.put(make_envelope(msg_id=1, value=21.0))
+        await inbound_queue.put(make_envelope(msg_id=2, value=22.0, received_at_ms=1_700_000_000_240))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await inbound_queue.put(make_envelope(msg_id=3, value=23.0, received_at_ms=1_700_000_000_260))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await self._wait_for_messages(websocket, expected=3)
+        await self._stop_task(task)
+
+        metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
+        self.assertEqual(metrics["adaptive_window_increase_events"], 1)
+        self.assertEqual(metrics["adaptive_window_decrease_events"], 1)
+        self.assertEqual(metrics["effective_batch_window_ms"], 100)
+        run_logger.close()
+
+    async def test_v4_register_client_receives_snapshot_frame(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v4", batch_window_ms=100, batch_max_messages=1)
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        await inbound_queue.put(make_envelope(msg_id=1, value=21.0))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await self._wait_for_messages(websocket, expected=1)
+
+        reconnecting_websocket = DummyWebSocket()
+        await forwarder.register_client(reconnecting_websocket)
+        await self._stop_task(task)
+
+        self.assertEqual(len(reconnecting_websocket.messages), 1)
+        snapshot_frame = json.loads(reconnecting_websocket.messages[0])
+        self.assertEqual(snapshot_frame["flush_reason"], "snapshot")
+        self.assertEqual(snapshot_frame["mode"], "v4")
+        self.assertEqual(snapshot_frame["update_count"], 1)
+        self.assertEqual(snapshot_frame["updates"][0]["msg_id"], 1)
+        run_logger.close()
+
+    async def test_v4_same_value_update_refreshes_ttl_even_with_value_dedup(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v4", batch_window_ms=100, batch_max_messages=1, value_dedup_enabled=True)
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        await inbound_queue.put(make_envelope(msg_id=1, ts_sent=1_700_000_000_100, value=21.0))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await inbound_queue.put(
+            make_envelope(
+                msg_id=2,
+                ts_sent=1_700_000_000_300,
+                value=21.0,
+                received_at_ms=1_700_000_000_240,
+            )
+        )
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await self._wait_for_messages(websocket, expected=2)
+        await self._stop_task(task)
+
+        second_frame = json.loads(websocket.messages[1])
+        self.assertEqual(second_frame["update_count"], 1)
+        self.assertEqual(second_frame["updates"][0]["msg_id"], 2)
+        self.assertEqual(forwarder.latest_snapshot[("101", "temperature")].ts_sent, 1_700_000_000_300)
+
+        metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
+        self.assertEqual(metrics["value_dedup_dropped"], 0)
+        run_logger.close()
+
     async def test_invalid_payload_does_not_break_pending_batch(self) -> None:
         forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
             config=ForwarderConfig(mode="v1", batch_window_ms=1_000, batch_max_messages=5)
@@ -204,6 +319,53 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(frame["update_count"], 2)
         metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
         self.assertEqual(metrics["invalid_msgs"], 1)
+        run_logger.close()
+
+    async def test_runtime_config_update_applies_safe_fields(self) -> None:
+        forwarder, _, _, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v4", batch_window_ms=200, batch_max_messages=5, freshness_ttl_ms=1_000)
+        )
+
+        snapshot = forwarder.update_runtime_config(
+            {
+                "batch_window_ms": 300,
+                "freshness_ttl_ms": 1_500,
+                "adaptive_max_batch_window_ms": 1_500,
+            }
+        )
+
+        self.assertEqual(snapshot["mode"], "v4")
+        self.assertEqual(snapshot["batch_window_ms"], 300)
+        self.assertEqual(snapshot["freshness_ttl_ms"], 1_500)
+        self.assertEqual(snapshot["effective_batch_window_ms"], 300)
+        self.assertEqual(snapshot["adaptive_max_batch_window_ms"], 1_500)
+        run_logger.close()
+
+    async def test_runtime_config_update_rejects_mode_change(self) -> None:
+        forwarder, _, _, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v3", batch_window_ms=200, batch_max_messages=5)
+        )
+
+        with self.assertRaisesRegex(ValueError, "startup-only"):
+            forwarder.update_runtime_config({"mode": "v4"})
+
+        run_logger.close()
+
+    async def test_metrics_report_stale_sensor_count_with_ttl(self) -> None:
+        forwarder, inbound_queue, websocket, _, run_logger = await self._build_forwarder(
+            config=ForwarderConfig(mode="v4", batch_window_ms=100, batch_max_messages=1, freshness_ttl_ms=100)
+        )
+
+        task = asyncio.create_task(forwarder.run_forever())
+        stale_ts = int(time.time_ns() // 1_000_000) - 5_000
+        await inbound_queue.put(make_envelope(msg_id=1, ts_sent=stale_ts, value=21.0))
+        await asyncio.wait_for(inbound_queue.join(), timeout=1)
+        await self._wait_for_messages(websocket, expected=1)
+        await self._stop_task(task)
+
+        metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
+        self.assertEqual(metrics["stale_sensor_count"], 1)
+        self.assertEqual(metrics["freshness_ttl_ms"], 100)
         run_logger.close()
 
     async def _build_forwarder(

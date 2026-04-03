@@ -48,6 +48,15 @@ $gatewayMode = Get-Setting -Name "GATEWAY_MODE" -DefaultValue "v0"
 $batchWindowMs = Get-Setting -Name "BATCH_WINDOW_MS" -DefaultValue "250"
 $batchMaxMessages = Get-Setting -Name "BATCH_MAX_MESSAGES" -DefaultValue "50"
 $valueDedupEnabled = Get-Setting -Name "VALUE_DEDUP_ENABLED" -DefaultValue "0"
+$freshnessTtlMs = Get-Setting -Name "FRESHNESS_TTL_MS" -DefaultValue "1000"
+$adaptiveMinBatchWindowMs = Get-Setting -Name "ADAPTIVE_MIN_BATCH_WINDOW_MS" -DefaultValue "10"
+$adaptiveMaxBatchWindowMs = Get-Setting -Name "ADAPTIVE_MAX_BATCH_WINDOW_MS" -DefaultValue "1000"
+$adaptiveStepUpMs = Get-Setting -Name "ADAPTIVE_STEP_UP_MS" -DefaultValue "100"
+$adaptiveStepDownMs = Get-Setting -Name "ADAPTIVE_STEP_DOWN_MS" -DefaultValue "50"
+$adaptiveQueueHighWatermark = Get-Setting -Name "ADAPTIVE_QUEUE_HIGH_WATERMARK" -DefaultValue "25"
+$adaptiveQueueLowWatermark = Get-Setting -Name "ADAPTIVE_QUEUE_LOW_WATERMARK" -DefaultValue "5"
+$adaptiveSendSlowMs = Get-Setting -Name "ADAPTIVE_SEND_SLOW_MS" -DefaultValue "40"
+$adaptiveRecoveryStreak = Get-Setting -Name "ADAPTIVE_RECOVERY_STREAK" -DefaultValue "3"
 $replaySpeed = Get-Setting -Name "REPLAY_SPEED" -DefaultValue "1.0"
 $sensorLimit = Get-Setting -Name "SENSOR_LIMIT" -DefaultValue "0"
 $durationS = [int](Get-Setting -Name "DURATION_S" -DefaultValue "60")
@@ -81,6 +90,15 @@ Set-Location '$repoRoot'
 `$env:BATCH_WINDOW_MS = '$batchWindowMs'
 `$env:BATCH_MAX_MESSAGES = '$batchMaxMessages'
 `$env:VALUE_DEDUP_ENABLED = '$valueDedupEnabled'
+`$env:FRESHNESS_TTL_MS = '$freshnessTtlMs'
+`$env:ADAPTIVE_MIN_BATCH_WINDOW_MS = '$adaptiveMinBatchWindowMs'
+`$env:ADAPTIVE_MAX_BATCH_WINDOW_MS = '$adaptiveMaxBatchWindowMs'
+`$env:ADAPTIVE_STEP_UP_MS = '$adaptiveStepUpMs'
+`$env:ADAPTIVE_STEP_DOWN_MS = '$adaptiveStepDownMs'
+`$env:ADAPTIVE_QUEUE_HIGH_WATERMARK = '$adaptiveQueueHighWatermark'
+`$env:ADAPTIVE_QUEUE_LOW_WATERMARK = '$adaptiveQueueLowWatermark'
+`$env:ADAPTIVE_SEND_SLOW_MS = '$adaptiveSendSlowMs'
+`$env:ADAPTIVE_RECOVERY_STREAK = '$adaptiveRecoveryStreak'
 & '$pythonExe' -m gateway.app
 "@
 

@@ -59,6 +59,31 @@ class SensorMessageTests(unittest.TestCase):
         self.assertEqual(frame.mode, "v2")
         self.assertEqual(frame.updates[0].duplicate_key(), ("101", 7))
 
+    def test_aggregate_frame_accepts_snapshot_payload(self) -> None:
+        frame = AggregatedFrame.model_validate(
+            {
+                "kind": "aggregate_frame",
+                "frame_id": 2,
+                "mode": "v4",
+                "flush_reason": "snapshot",
+                "window_started_ms": 1_700_000_000_000,
+                "window_closed_ms": 1_700_000_005_000,
+                "update_count": 1,
+                "updates": [
+                    {
+                        "sensor_id": "sensor-a",
+                        "msg_id": 8,
+                        "ts_sent": 1_700_000_000_123,
+                        "metric_type": "temperature",
+                        "value": 20.1,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(frame.mode, "v4")
+        self.assertEqual(frame.flush_reason, "snapshot")
+
 
 if __name__ == "__main__":
     unittest.main()

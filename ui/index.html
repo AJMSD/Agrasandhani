@@ -234,7 +234,8 @@
         </div>
         <div class="headline-copy">
           <h1>Agrasandhani Gateway</h1>
-          <p>Supports baseline forwarding and M2 aggregate-frame modes with live measurement counters and browser-side CSV export.</p>
+          <p>Supports baseline forwarding plus M3 adaptive aggregate-frame modes, runtime TTL tuning, and reconnect-safe last-known-good snapshots.</p>
+          <p id="runtime-summary">Mode -- | TTL -- ms | Effective window -- ms</p>
         </div>
       </div>
       <div class="stats">
@@ -261,7 +262,7 @@
         <div class="stat-card">
           <span class="stat-label">Stale Count</span>
           <span class="stat-value" id="stale-count">0</span>
-          <span class="stat-detail">Rows older than 1000 ms in the current snapshot.</span>
+          <span class="stat-detail">Rows older than the active freshness TTL in the current snapshot.</span>
         </div>
         <div class="stat-card">
           <span class="stat-label">WebSocket FPS</span>
@@ -291,16 +292,21 @@
 
   <script>
     const MEASUREMENT_WINDOW_MS = 5_000;
-    const STALE_THRESHOLD_MS = 1_000;
     const records = new Map();
     const measurementEvents = [];
     const frameReceiveTimes = [];
     const updateTimes = [];
+    const runtimeConfig = {
+      mode: "--",
+      freshnessTtlMs: 1_000,
+      effectiveBatchWindowMs: null,
+    };
 
     let frameCount = 0;
     let messageCount = 0;
     const connectionStatus = document.getElementById("connection-status");
     const exportButton = document.getElementById("export-button");
+    const runtimeSummary = document.getElementById("runtime-summary");
     const rowCount = document.getElementById("row-count");
     const messageCountNode = document.getElementById("message-count");
     const eventCountDetail = document.getElementById("event-count-detail");
@@ -311,7 +317,7 @@
     const sensorBody = document.getElementById("sensor-body");
 
     const measurements = {
-      thresholdMs: STALE_THRESHOLD_MS,
+      thresholdMs: runtimeConfig.freshnessTtlMs,
       events: measurementEvents,
       summary: {
         latestRowCount: 0,
@@ -372,6 +378,17 @@
       return `${message.sensor_id}::${message.metric_type}`;
     }
 
+    function currentFreshnessTtlMs() {
+      return runtimeConfig.freshnessTtlMs;
+    }
+
+    function updateRuntimeSummary() {
+      const ttlLabel = Number.isFinite(runtimeConfig.freshnessTtlMs) ? runtimeConfig.freshnessTtlMs : "--";
+      const windowLabel = Number.isFinite(runtimeConfig.effectiveBatchWindowMs) ? runtimeConfig.effectiveBatchWindowMs : "--";
+      runtimeSummary.textContent = `Mode ${runtimeConfig.mode} | TTL ${ttlLabel} ms | Effective window ${windowLabel} ms`;
+      measurements.thresholdMs = runtimeConfig.freshnessTtlMs;
+    }
+
     function formatTimestamp(epochMs) {
       const date = new Date(epochMs);
       return date.toLocaleTimeString();
@@ -401,7 +418,7 @@
       let staleCount = 0;
       const renderedRows = rows.map((message) => {
         const ageMs = nowMs - message.ts_sent;
-        const isStale = ageMs > STALE_THRESHOLD_MS;
+        const isStale = ageMs > currentFreshnessTtlMs();
         if (isStale) {
           staleCount += 1;
         }
@@ -448,6 +465,23 @@
         : null;
     }
 
+    async function refreshConfig() {
+      try {
+        const response = await fetch("/config", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Config request failed with ${response.status}`);
+        }
+
+        const payload = await response.json();
+        runtimeConfig.mode = payload.mode ?? runtimeConfig.mode;
+        runtimeConfig.freshnessTtlMs = Number(payload.freshness_ttl_ms ?? runtimeConfig.freshnessTtlMs);
+        runtimeConfig.effectiveBatchWindowMs = Number(payload.effective_batch_window_ms ?? runtimeConfig.effectiveBatchWindowMs);
+        updateRuntimeSummary();
+      } catch (error) {
+        console.warn("Failed to refresh runtime config", error);
+      }
+    }
+
     function downloadMeasurements() {
       const csvText = measurements.exportCsv();
       if (!csvText) {
@@ -487,7 +521,7 @@
 
         for (const message of updates) {
           const ageMs = displayTimeMs - message.ts_sent;
-          const staleAtDisplay = ageMs > STALE_THRESHOLD_MS;
+          const staleAtDisplay = ageMs > currentFreshnessTtlMs();
           messageCount += 1;
           updateTimes.push(displayTimeMs);
           records.set(recordKey(message), message);
@@ -517,7 +551,10 @@
     }
 
     exportButton.addEventListener("click", downloadMeasurements);
+    refreshConfig();
+    window.setInterval(refreshConfig, 5_000);
     window.setInterval(renderRows, 500);
+    updateRuntimeSummary();
     renderRows();
     connect();
   </script>

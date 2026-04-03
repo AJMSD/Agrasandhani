@@ -28,8 +28,8 @@ class AggregatedFrame(BaseModel):
 
     kind: Literal["aggregate_frame"] = "aggregate_frame"
     frame_id: int = Field(ge=1)
-    mode: Literal["v1", "v2"]
-    flush_reason: Literal["time", "threshold"]
+    mode: Literal["v1", "v2", "v3", "v4"]
+    flush_reason: Literal["time", "threshold", "snapshot"]
     window_started_ms: int = Field(ge=0)
     window_closed_ms: int = Field(ge=0)
     update_count: int = Field(ge=0)

@@ -1,6 +1,6 @@
 # Agrasandhani
 
-Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets into a minimal dashboard. It now supports the baseline forward-every-message path plus M2 aggregation modes for batching, exact duplicate suppression, latest-per-sensor compaction, and optional value-based deduplication.
+Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets into a minimal dashboard. It now supports the baseline forward-every-message path plus M3 gateway modes for batching, exact duplicate suppression, latest-per-sensor compaction, adaptive publish cadence, runtime-tunable freshness TTLs, and reconnect-safe last-known-good snapshots.
 
 ## Stack
 
@@ -19,7 +19,7 @@ Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets 
 - `simulator/preprocess_intel_lab.py`: normalizes local Intel Lab readings into replay-ready CSV
 - `simulator/datasets/aot_sample.csv`: checked-in normalized AoT example output
 - `simulator/datasets/intel_lab_sample.csv`: checked-in normalized Intel Lab example output
-- `gateway/app.py`: FastAPI app with `/health`, `/metrics`, `/ws`, and static UI serving
+- `gateway/app.py`: FastAPI app with `/health`, `/metrics`, `/config`, `/ws`, and static UI serving
 - `gateway/mqtt_ingest.py`: MQTT subscriber that pushes broker messages into an internal queue
 - `gateway/forwarder.py`: gateway forwarding modes, aggregate-frame batching, metrics, and CSV run logger
 - `gateway/schemas.py`: shared payload validation
@@ -46,13 +46,15 @@ The simulator preserves pacing from the CSV timestamps, but rewrites outgoing `t
 WebSocket outputs depend on `GATEWAY_MODE`:
 
 - `v0`: emits the raw `SensorMessage` payload above for each accepted MQTT message
-- `v1` and `v2`: emit an aggregate frame envelope
+- `v1` and `v2`: emit a fixed-window aggregate frame envelope
+- `v3`: emits aggregate frames with adaptive window control based on queue depth and downstream send cost
+- `v4`: emits the same adaptive aggregate frames as `v3` and also sends a snapshot frame containing the current last-known-good state to newly connected dashboards
 
 ```json
 {
   "kind": "aggregate_frame",
   "frame_id": 3,
-  "mode": "v2",
+  "mode": "v4",
   "flush_reason": "time",
   "window_started_ms": 1712050000000,
   "window_closed_ms": 1712050000250,
@@ -68,6 +70,8 @@ WebSocket outputs depend on `GATEWAY_MODE`:
   ]
 }
 ```
+
+`flush_reason` is `time`, `threshold`, or `snapshot`. Snapshot frames are sent only to a newly connected client and repopulate the UI with the current LKG view.
 
 ## Real Dataset Preprocessing
 
@@ -185,10 +189,19 @@ $env:MQTT_QOS = "0"
 $env:WS_HOST = "127.0.0.1"
 $env:WS_PORT = "8000"
 $env:RUN_ID = "manual-baseline"
-$env:GATEWAY_MODE = "v0"
+$env:GATEWAY_MODE = "v4"
 $env:BATCH_WINDOW_MS = "250"
 $env:BATCH_MAX_MESSAGES = "50"
 $env:VALUE_DEDUP_ENABLED = "0"
+$env:FRESHNESS_TTL_MS = "1000"
+$env:ADAPTIVE_MIN_BATCH_WINDOW_MS = "10"
+$env:ADAPTIVE_MAX_BATCH_WINDOW_MS = "1000"
+$env:ADAPTIVE_STEP_UP_MS = "100"
+$env:ADAPTIVE_STEP_DOWN_MS = "50"
+$env:ADAPTIVE_QUEUE_HIGH_WATERMARK = "25"
+$env:ADAPTIVE_QUEUE_LOW_WATERMARK = "5"
+$env:ADAPTIVE_SEND_SLOW_MS = "40"
+$env:ADAPTIVE_RECOVERY_STREAK = "3"
 python -m gateway.app
 ```
 
@@ -199,10 +212,19 @@ export MQTT_QOS=0
 export WS_HOST=127.0.0.1
 export WS_PORT=8000
 export RUN_ID=manual-baseline
-export GATEWAY_MODE=v0
+export GATEWAY_MODE=v4
 export BATCH_WINDOW_MS=250
 export BATCH_MAX_MESSAGES=50
 export VALUE_DEDUP_ENABLED=0
+export FRESHNESS_TTL_MS=1000
+export ADAPTIVE_MIN_BATCH_WINDOW_MS=10
+export ADAPTIVE_MAX_BATCH_WINDOW_MS=1000
+export ADAPTIVE_STEP_UP_MS=100
+export ADAPTIVE_STEP_DOWN_MS=50
+export ADAPTIVE_QUEUE_HIGH_WATERMARK=25
+export ADAPTIVE_QUEUE_LOW_WATERMARK=5
+export ADAPTIVE_SEND_SLOW_MS=40
+export ADAPTIVE_RECOVERY_STREAK=3
 python -m gateway.app
 ```
 
@@ -295,7 +317,7 @@ Expected result:
 
 UI measurement notes:
 
-- `Stale Count` uses a fixed UI threshold of `1000` ms for baseline measurement only
+- `Stale Count` uses the active runtime TTL from `/config`, not a hard-coded client constant
 - `window.agrasandhaniMeasurements.summary` exposes the current dashboard counters for inspection
 - `window.agrasandhaniMeasurements.events` contains the in-memory per-frame display log
 - `window.agrasandhaniMeasurements.exportCsv()` returns the same CSV content used by the export button
@@ -305,11 +327,25 @@ Useful checks:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/metrics
+Invoke-RestMethod http://127.0.0.1:8000/config
 ```
 
 ```bash
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/metrics
+curl http://127.0.0.1:8000/config
+```
+
+Runtime tuning example:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/config -Method Patch -ContentType "application/json" -Body '{"batch_window_ms":350,"freshness_ttl_ms":1500}'
+```
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/config \
+  -H "Content-Type: application/json" \
+  -d '{"batch_window_ms":350,"freshness_ttl_ms":1500}'
 ```
 
 ## Standard 60s Run
@@ -329,10 +365,19 @@ Optional overrides:
 
 ```powershell
 $env:RUN_ID = "session-001"
-$env:GATEWAY_MODE = "v2"
+$env:GATEWAY_MODE = "v4"
 $env:BATCH_WINDOW_MS = "250"
 $env:BATCH_MAX_MESSAGES = "50"
 $env:VALUE_DEDUP_ENABLED = "0"
+$env:FRESHNESS_TTL_MS = "1000"
+$env:ADAPTIVE_MIN_BATCH_WINDOW_MS = "10"
+$env:ADAPTIVE_MAX_BATCH_WINDOW_MS = "1000"
+$env:ADAPTIVE_STEP_UP_MS = "100"
+$env:ADAPTIVE_STEP_DOWN_MS = "50"
+$env:ADAPTIVE_QUEUE_HIGH_WATERMARK = "25"
+$env:ADAPTIVE_QUEUE_LOW_WATERMARK = "5"
+$env:ADAPTIVE_SEND_SLOW_MS = "40"
+$env:ADAPTIVE_RECOVERY_STREAK = "3"
 $env:DURATION_S = "60"
 $env:REPLAY_SPEED = "1.0"
 $env:SENSOR_LIMIT = "0"
@@ -346,10 +391,19 @@ $env:BURST_SPEED_MULTIPLIER = "5"
 
 ```bash
 export RUN_ID=session-001
-export GATEWAY_MODE=v2
+export GATEWAY_MODE=v4
 export BATCH_WINDOW_MS=250
 export BATCH_MAX_MESSAGES=50
 export VALUE_DEDUP_ENABLED=0
+export FRESHNESS_TTL_MS=1000
+export ADAPTIVE_MIN_BATCH_WINDOW_MS=10
+export ADAPTIVE_MAX_BATCH_WINDOW_MS=1000
+export ADAPTIVE_STEP_UP_MS=100
+export ADAPTIVE_STEP_DOWN_MS=50
+export ADAPTIVE_QUEUE_HIGH_WATERMARK=25
+export ADAPTIVE_QUEUE_LOW_WATERMARK=5
+export ADAPTIVE_SEND_SLOW_MS=40
+export ADAPTIVE_RECOVERY_STREAK=3
 export DURATION_S=60
 export REPLAY_SPEED=1.0
 export SENSOR_LIMIT=0
@@ -363,7 +417,7 @@ export BURST_SPEED_MULTIPLIER=5
 
 Artifacts are written to `experiments/logs/<RUN_ID>/`:
 
-- `gateway_forward_log.csv`: per-message timing log
+- `gateway_forward_log.csv`: per-message timing log with frame window and adaptation decision columns
 - `gateway.stdout.log` and `gateway.stderr.log`
 - `simulator.stdout.log` and `simulator.stderr.log`
 - `metrics.json`: final `/metrics` snapshot
@@ -373,10 +427,19 @@ Artifacts are written to `experiments/logs/<RUN_ID>/`:
 - `MQTT_HOST`, `MQTT_PORT`, `MQTT_QOS`
 - `WS_HOST`, `WS_PORT`
 - `RUN_ID`
-- `GATEWAY_MODE` (`v0`, `v1`, or `v2`)
+- `GATEWAY_MODE` (`v0`, `v1`, `v2`, `v3`, or `v4`)
 - `BATCH_WINDOW_MS`
 - `BATCH_MAX_MESSAGES`
 - `VALUE_DEDUP_ENABLED`
+- `FRESHNESS_TTL_MS`
+- `ADAPTIVE_MIN_BATCH_WINDOW_MS`
+- `ADAPTIVE_MAX_BATCH_WINDOW_MS`
+- `ADAPTIVE_STEP_UP_MS`
+- `ADAPTIVE_STEP_DOWN_MS`
+- `ADAPTIVE_QUEUE_HIGH_WATERMARK`
+- `ADAPTIVE_QUEUE_LOW_WATERMARK`
+- `ADAPTIVE_SEND_SLOW_MS`
+- `ADAPTIVE_RECOVERY_STREAK`
 - `REPLAY_SPEED`
 - `SENSOR_LIMIT`
 - `DURATION_S`
