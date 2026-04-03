@@ -33,6 +33,13 @@ PY
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+  PYTHON_EXE="${REPO_ROOT}/.venv/bin/python"
+elif [[ -x "${REPO_ROOT}/.venv/Scripts/python.exe" ]]; then
+  PYTHON_EXE="${REPO_ROOT}/.venv/Scripts/python.exe"
+else
+  PYTHON_EXE="python"
+fi
 
 MQTT_HOST="$(get_setting MQTT_HOST 127.0.0.1)"
 MQTT_PORT="$(get_setting MQTT_PORT 1883)"
@@ -78,7 +85,7 @@ trap cleanup EXIT
 (
   cd "$REPO_ROOT"
   export MQTT_HOST MQTT_PORT MQTT_QOS WS_HOST WS_PORT RUN_ID GATEWAY_MODE BATCH_WINDOW_MS BATCH_MAX_MESSAGES VALUE_DEDUP_ENABLED
-  python -m gateway.app
+  "$PYTHON_EXE" -m gateway.app
 ) >"$GATEWAY_STDOUT" 2>"$GATEWAY_STDERR" &
 GATEWAY_PID=$!
 
@@ -91,10 +98,10 @@ fi
 (
   cd "$REPO_ROOT"
   export MQTT_HOST MQTT_PORT MQTT_QOS REPLAY_SPEED SENSOR_LIMIT DURATION_S BURST_ENABLED BURST_START_S BURST_DURATION_S BURST_SPEED_MULTIPLIER RUN_ID
-  python ./simulator/replay_publisher.py --data-file ./simulator/sample_data.csv
+  "$PYTHON_EXE" ./simulator/replay_publisher.py --data-file ./simulator/sample_data.csv
 ) >"$SIMULATOR_STDOUT" 2>"$SIMULATOR_STDERR"
 
-python - "$WS_HOST" "$WS_PORT" "$METRICS_JSON" <<'PY'
+"$PYTHON_EXE" - "$WS_HOST" "$WS_PORT" "$METRICS_JSON" <<'PY'
 import json
 import sys
 import urllib.request

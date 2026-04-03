@@ -16,13 +16,13 @@ function Get-Setting {
 
 function Test-TcpPort {
     param(
-        [string]$Host,
+        [string]$TargetHost,
         [int]$Port
     )
 
     $client = [System.Net.Sockets.TcpClient]::new()
     try {
-        $client.Connect($Host, $Port)
+        $client.Connect($TargetHost, $Port)
         return $true
     }
     catch {
@@ -35,6 +35,8 @@ function Test-TcpPort {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $shellPath = (Get-Process -Id $PID).Path
+$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+$pythonExe = if (Test-Path $venvPython) { $venvPython } else { "python" }
 
 $mqttHost = Get-Setting -Name "MQTT_HOST" -DefaultValue "127.0.0.1"
 $mqttPort = [int](Get-Setting -Name "MQTT_PORT" -DefaultValue "1883")
@@ -54,7 +56,7 @@ $burstStartS = Get-Setting -Name "BURST_START_S" -DefaultValue "0"
 $burstDurationS = Get-Setting -Name "BURST_DURATION_S" -DefaultValue "0"
 $burstSpeedMultiplier = Get-Setting -Name "BURST_SPEED_MULTIPLIER" -DefaultValue "5.0"
 
-if (-not (Test-TcpPort -Host $mqttHost -Port $mqttPort)) {
+if (-not (Test-TcpPort -TargetHost $mqttHost -Port $mqttPort)) {
     throw "MQTT broker is not reachable at ${mqttHost}:${mqttPort}. Start Mosquitto before running this script."
 }
 
@@ -79,7 +81,7 @@ Set-Location '$repoRoot'
 `$env:BATCH_WINDOW_MS = '$batchWindowMs'
 `$env:BATCH_MAX_MESSAGES = '$batchMaxMessages'
 `$env:VALUE_DEDUP_ENABLED = '$valueDedupEnabled'
-python -m gateway.app
+& '$pythonExe' -m gateway.app
 "@
 
 $simulatorCommand = @"
@@ -95,7 +97,7 @@ Set-Location '$repoRoot'
 `$env:BURST_DURATION_S = '$burstDurationS'
 `$env:BURST_SPEED_MULTIPLIER = '$burstSpeedMultiplier'
 `$env:RUN_ID = '$runId'
-python .\simulator\replay_publisher.py --data-file .\simulator\sample_data.csv
+& '$pythonExe' .\simulator\replay_publisher.py --data-file .\simulator\sample_data.csv
 "@
 
 $gatewayProcess = Start-Process `
@@ -106,7 +108,7 @@ $gatewayProcess = Start-Process `
     -PassThru
 
 Start-Sleep -Seconds 3
-if (-not (Test-TcpPort -Host $wsHost -Port $wsPort)) {
+if (-not (Test-TcpPort -TargetHost $wsHost -Port $wsPort)) {
     Stop-Process -Id $gatewayProcess.Id -Force
     throw "Gateway did not start on ${wsHost}:${wsPort}. Check $gatewayStderr for details."
 }
@@ -135,7 +137,7 @@ if ($simulatorProcess.ExitCode -ne 0) {
 Invoke-RestMethod -Uri "http://${wsHost}:${wsPort}/metrics" | ConvertTo-Json -Depth 3 | Set-Content -Path $metricsJson
 
 if (-not $gatewayProcess.HasExited) {
-    Stop-Process -Id $gatewayProcess.Id -Force
+    Stop-Process -Id $gatewayProcess.Id -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "Run complete. Artifacts saved to $runDir"
