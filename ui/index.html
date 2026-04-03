@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agrasandhani Dashboard</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --panel: rgba(255, 250, 242, 0.9);
+      --line: #d4c4ac;
+      --text: #1e1d1a;
+      --muted: #615d56;
+      --accent: #2b6c4b;
+      --accent-soft: rgba(43, 108, 75, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(43, 108, 75, 0.12), transparent 35%),
+        linear-gradient(135deg, #f9f4eb 0%, #efe3d2 100%);
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 2rem 1rem 3rem;
+    }
+
+    .hero {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .headline {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 1.5rem;
+      box-shadow: 0 18px 40px rgba(94, 78, 55, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .stats {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 1rem;
+      backdrop-filter: blur(12px);
+    }
+
+    .stat-label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .stat-value {
+      display: block;
+      margin-top: 0.35rem;
+      font-size: 1.9rem;
+      color: var(--accent);
+    }
+
+    .table-shell {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--panel);
+      box-shadow: 0 18px 40px rgba(94, 78, 55, 0.08);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead {
+      background: rgba(212, 196, 172, 0.28);
+    }
+
+    th, td {
+      padding: 0.9rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(212, 196, 172, 0.55);
+      font-size: 0.95rem;
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.85rem;
+    }
+
+    @media (max-width: 720px) {
+      th, td {
+        padding: 0.75rem;
+        font-size: 0.85rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="headline">
+        <div class="status-pill" id="connection-status">Connecting...</div>
+        <h1>Agrasandhani Baseline</h1>
+        <p>Forward-every-message mode with a live latest-per-sensor view and real latency instrumentation.</p>
+      </div>
+      <div class="stats">
+        <div class="stat-card">
+          <span class="stat-label">Latest Rows</span>
+          <span class="stat-value" id="row-count">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Messages Seen</span>
+          <span class="stat-value" id="message-count">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Last Update</span>
+          <span class="stat-value" id="last-update">--</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th>Sensor</th>
+            <th>Metric</th>
+            <th>Value</th>
+            <th>Msg ID</th>
+            <th>Age (ms)</th>
+            <th>Sent At</th>
+          </tr>
+        </thead>
+        <tbody id="sensor-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const records = new Map();
+    let messageCount = 0;
+    const connectionStatus = document.getElementById("connection-status");
+    const rowCount = document.getElementById("row-count");
+    const messageCountNode = document.getElementById("message-count");
+    const lastUpdateNode = document.getElementById("last-update");
+    const sensorBody = document.getElementById("sensor-body");
+
+    function recordKey(message) {
+      return `${message.sensor_id}::${message.metric_type}`;
+    }
+
+    function formatTimestamp(epochMs) {
+      const date = new Date(epochMs);
+      return date.toLocaleTimeString();
+    }
+
+    function renderRows() {
+      const rows = [...records.values()].sort((left, right) => {
+        const sensorCompare = String(left.sensor_id).localeCompare(String(right.sensor_id), undefined, { numeric: true });
+        if (sensorCompare !== 0) {
+          return sensorCompare;
+        }
+        return left.metric_type.localeCompare(right.metric_type);
+      });
+
+      sensorBody.innerHTML = rows.map((message) => {
+        const ageMs = Date.now() - message.ts_sent;
+        return `
+          <tr>
+            <td>${message.sensor_id}</td>
+            <td>${message.metric_type}</td>
+            <td>${message.value.toFixed(2)}</td>
+            <td>${message.msg_id}</td>
+            <td>${ageMs}</td>
+            <td>${formatTimestamp(message.ts_sent)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      rowCount.textContent = String(rows.length);
+      messageCountNode.textContent = String(messageCount);
+    }
+
+    function connect() {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+
+      socket.addEventListener("open", () => {
+        connectionStatus.textContent = "WebSocket connected";
+      });
+
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(event.data);
+        records.set(recordKey(message), message);
+        messageCount += 1;
+        lastUpdateNode.textContent = formatTimestamp(Date.now());
+        renderRows();
+      });
+
+      socket.addEventListener("close", () => {
+        connectionStatus.textContent = "Disconnected, retrying...";
+        window.setTimeout(connect, 1000);
+      });
+    }
+
+    window.setInterval(renderRows, 500);
+    connect();
+  </script>
+</body>
+</html>
