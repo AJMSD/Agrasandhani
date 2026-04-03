@@ -1,6 +1,6 @@
 # Agrasandhani
 
-Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets into a minimal dashboard. It now supports the baseline forward-every-message path plus M3 gateway modes for batching, exact duplicate suppression, latest-per-sensor compaction, adaptive publish cadence, runtime-tunable freshness TTLs, and reconnect-safe last-known-good snapshots.
+Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets into a minimal dashboard. It now supports the baseline forward-every-message path plus M4 tooling for batching, exact duplicate suppression, latest-per-sensor compaction, adaptive publish cadence, runtime-tunable freshness TTLs, reconnect-safe last-known-good snapshots, and deterministic impairment experiments.
 
 ## Stack
 
@@ -9,6 +9,7 @@ Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets 
 - `paho-mqtt`
 - FastAPI + uvicorn
 - Static HTML + browser WebSocket client
+- Node.js + Playwright for experiment capture
 
 ## Repo Layout
 
@@ -26,6 +27,11 @@ Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets 
 - `ui/index.html`: dashboard with live measurement counters and display-event CSV export
 - `experiments/run_one.ps1`: standard 60s run harness
 - `experiments/run_one.sh`: standard 60s run harness for macOS/Linux
+- `experiments/impairment_proxy.py`: app-layer impairment proxy that serves the dashboard and proxies `/ws` plus `/config`
+- `experiments/scenarios/*.json`: deterministic impairment phase definitions
+- `experiments/run_sweep.py`: comparison runner for `v0`, `v2`, and `v4` scenario sweeps
+- `experiments/analyze_run.py`: derives latency, bandwidth, loss, lateness, and freshness metrics
+- `experiments/plot_sweep.py`: generates sweep plots from per-run summaries
 
 ## Message Schema
 
@@ -156,9 +162,22 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-2. Make sure `mosquitto` is installed and available on your `PATH`.
+2. Make sure `mosquitto` is installed.
+   On Windows, if it is not on `PATH`, the default executable path is usually `C:\Program Files\mosquitto\mosquitto.exe`.
 
-3. Regenerate the sample dataset if needed:
+3. Install the browser automation dependency for M4 runs:
+
+```powershell
+npm install
+npx playwright install chromium
+```
+
+```bash
+npm install
+npx playwright install chromium
+```
+
+4. Regenerate the sample dataset if needed:
 
 ```powershell
 python .\simulator\generate_sample_data.py
@@ -174,6 +193,12 @@ Start the MQTT broker:
 
 ```powershell
 mosquitto -p 1883 -v
+```
+
+If `mosquitto` is not on `PATH` in PowerShell:
+
+```powershell
+& "C:\Program Files\mosquitto\mosquitto.exe" -p 1883 -v
 ```
 
 ```bash
@@ -192,6 +217,7 @@ $env:RUN_ID = "manual-baseline"
 $env:GATEWAY_MODE = "v4"
 $env:BATCH_WINDOW_MS = "250"
 $env:BATCH_MAX_MESSAGES = "50"
+$env:DUPLICATE_TTL_MS = "30000"
 $env:VALUE_DEDUP_ENABLED = "0"
 $env:FRESHNESS_TTL_MS = "1000"
 $env:ADAPTIVE_MIN_BATCH_WINDOW_MS = "10"
@@ -215,6 +241,7 @@ export RUN_ID=manual-baseline
 export GATEWAY_MODE=v4
 export BATCH_WINDOW_MS=250
 export BATCH_MAX_MESSAGES=50
+export DUPLICATE_TTL_MS=30000
 export VALUE_DEDUP_ENABLED=0
 export FRESHNESS_TTL_MS=1000
 export ADAPTIVE_MIN_BATCH_WINDOW_MS=10
@@ -340,12 +367,16 @@ Runtime tuning example:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/config -Method Patch -ContentType "application/json" -Body '{"batch_window_ms":350,"freshness_ttl_ms":1500}'
+Invoke-RestMethod http://127.0.0.1:8000/config -Method Patch -ContentType "application/json" -Body '{"duplicate_ttl_ms":5000}'
 ```
 
 ```bash
 curl -X PATCH http://127.0.0.1:8000/config \
   -H "Content-Type: application/json" \
   -d '{"batch_window_ms":350,"freshness_ttl_ms":1500}'
+curl -X PATCH http://127.0.0.1:8000/config \
+  -H "Content-Type: application/json" \
+  -d '{"duplicate_ttl_ms":5000}'
 ```
 
 ## Standard 60s Run
@@ -368,6 +399,7 @@ $env:RUN_ID = "session-001"
 $env:GATEWAY_MODE = "v4"
 $env:BATCH_WINDOW_MS = "250"
 $env:BATCH_MAX_MESSAGES = "50"
+$env:DUPLICATE_TTL_MS = "30000"
 $env:VALUE_DEDUP_ENABLED = "0"
 $env:FRESHNESS_TTL_MS = "1000"
 $env:ADAPTIVE_MIN_BATCH_WINDOW_MS = "10"
@@ -394,6 +426,7 @@ export RUN_ID=session-001
 export GATEWAY_MODE=v4
 export BATCH_WINDOW_MS=250
 export BATCH_MAX_MESSAGES=50
+export DUPLICATE_TTL_MS=30000
 export VALUE_DEDUP_ENABLED=0
 export FRESHNESS_TTL_MS=1000
 export ADAPTIVE_MIN_BATCH_WINDOW_MS=10
@@ -422,6 +455,67 @@ Artifacts are written to `experiments/logs/<RUN_ID>/`:
 - `simulator.stdout.log` and `simulator.stderr.log`
 - `metrics.json`: final `/metrics` snapshot
 
+## M4 Impairment Sweeps
+
+The impairment proxy runs in front of the normal gateway and serves the same dashboard UI from its own port. It applies app-layer loss, delay/jitter, bandwidth shaping, and outage phases without changing the existing WebSocket payload contract.
+
+Default scenario files:
+
+- `clean`
+- `bandwidth_200kbps`
+- `loss_2pct`
+- `loss_5pct`
+- `delay_50ms_jitter20ms`
+- `outage_5s`
+
+Run the default minimal matrix from the PRD:
+
+```powershell
+python .\experiments\run_sweep.py --burst-enabled
+```
+
+```bash
+python ./experiments/run_sweep.py --burst-enabled
+```
+
+Useful overrides:
+
+```powershell
+python .\experiments\run_sweep.py `
+  --sweep-id m4-short `
+  --variants v0,v2,v4 `
+  --qos 0,1 `
+  --scenarios clean,loss_2pct,outage_5s `
+  --duration-s 20 `
+  --data-file .\simulator\datasets\intel_lab_sample.csv
+```
+
+```bash
+python ./experiments/run_sweep.py \
+  --sweep-id m4-short \
+  --variants v0,v2,v4 \
+  --qos 0,1 \
+  --scenarios clean,loss_2pct,outage_5s \
+  --duration-s 20 \
+  --data-file ./simulator/datasets/intel_lab_sample.csv
+```
+
+Each run directory under `experiments/logs/<SWEEP_ID>/` includes:
+
+- `manifest.json`
+- `gateway_forward_log.csv`
+- `proxy_frame_log.csv`
+- `gateway_metrics.json`
+- `proxy_metrics.json`
+- `dashboard_measurements.csv`
+- `dashboard_summary.json`
+- `dashboard.png`
+- `summary.json`, `summary.csv`, and `timeseries.csv`
+
+Sweep-level plots are written to `experiments/logs/<SWEEP_ID>/plots/`.
+
+The Linux-only `tc netem` cross-check helpers live under `experiments/netem/`.
+
 ## Environment Variables
 
 - `MQTT_HOST`, `MQTT_PORT`, `MQTT_QOS`
@@ -430,6 +524,7 @@ Artifacts are written to `experiments/logs/<RUN_ID>/`:
 - `GATEWAY_MODE` (`v0`, `v1`, `v2`, `v3`, or `v4`)
 - `BATCH_WINDOW_MS`
 - `BATCH_MAX_MESSAGES`
+- `DUPLICATE_TTL_MS`
 - `VALUE_DEDUP_ENABLED`
 - `FRESHNESS_TTL_MS`
 - `ADAPTIVE_MIN_BATCH_WINDOW_MS`
@@ -447,6 +542,11 @@ Artifacts are written to `experiments/logs/<RUN_ID>/`:
 - `BURST_START_S`
 - `BURST_DURATION_S`
 - `BURST_SPEED_MULTIPLIER`
+- `IMPAIR_HOST`, `IMPAIR_PORT`
+- `UPSTREAM_WS_URL`, `UPSTREAM_HTTP_BASE`
+- `IMPAIR_SCENARIO_FILE`
+- `IMPAIR_RANDOM_SEED`
+- `IMPAIR_FRAME_LOG_PATH`
 
 ## Tests
 

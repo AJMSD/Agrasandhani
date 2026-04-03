@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Playwright Fixture</title>
+</head>
+<body>
+  <div id="connection-status">Connected</div>
+  <script>
+    window.agrasandhaniMeasurements = {
+      thresholdMs: 1000,
+      summary: {
+        latestRowCount: 1,
+        messageCount: 2,
+        frameCount: 1,
+        staleCount: 0,
+        updateRatePerSecond: 1.25,
+        websocketFps: 0.5,
+        lastUpdateDisplay: "12:00:00 PM",
+        lastUpdateTimestampMs: 1700000000500
+      },
+      exportCsv() {
+        return [
+          "frame_index,frame_id,gateway_mode,sensor_id,metric_type,msg_id,ts_sent,ts_displayed,age_ms_at_display,stale_at_display",
+          "1,1,v4,101,temperature,7,1700000000000,1700000000500,500,false"
+        ].join("\n");
+      }
+    };
+  </script>
+</body>
+</html>
