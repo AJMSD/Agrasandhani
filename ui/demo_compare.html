@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agrasandhani Demo Compare</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --panel: rgba(255, 250, 242, 0.92);
+      --line: #d4c4ac;
+      --text: #1e1d1a;
+      --muted: #615d56;
+      --accent: #2b6c4b;
+      --accent-soft: rgba(43, 108, 75, 0.12);
+      --warn: #8f4d1f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(43, 108, 75, 0.14), transparent 35%),
+        linear-gradient(135deg, #f9f4eb 0%, #efe3d2 100%);
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 2rem;
+      display: grid;
+      gap: 1rem;
+    }
+
+    .hero,
+    .frame-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 18px 40px rgba(94, 78, 55, 0.08);
+    }
+
+    .hero {
+      padding: 1.5rem;
+      display: grid;
+      gap: 0.85rem;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: -0.04em;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .legend {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .legend-card {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      padding: 0.9rem 1rem;
+      background: rgba(255, 255, 255, 0.42);
+    }
+
+    .legend-card strong {
+      display: block;
+      margin-bottom: 0.35rem;
+      color: var(--accent);
+      font-size: 0.92rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .legend-card.warn strong {
+      color: var(--warn);
+    }
+
+    .frame-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .frame-card {
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto auto minmax(70vh, 1fr);
+    }
+
+    .frame-head {
+      padding: 1rem 1rem 0.35rem;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .frame-head h2 {
+      font-size: 1.4rem;
+      letter-spacing: -0.03em;
+    }
+
+    .frame-meta {
+      padding: 0 1rem 0.85rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+      word-break: break-all;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: white;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92em;
+      background: var(--accent-soft);
+      padding: 0.08rem 0.3rem;
+      border-radius: 999px;
+    }
+
+    @media (max-width: 1100px) {
+      .frame-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .frame-card {
+        grid-template-rows: auto auto minmax(55vh, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Agrasandhani Demo Compare</h1>
+      <p>Use this side-by-side view to show how the baseline gateway reacts to bursty traffic and outages compared with the adaptive <code>v4</code> smart mode.</p>
+      <div class="legend">
+        <div class="legend-card">
+          <strong>Burst</strong>
+          Watch update rate and row churn during the first seconds. The baseline path forwards every message while the smart mode settles into aggregate frames.
+        </div>
+        <div class="legend-card warn">
+          <strong>Outage + Stale</strong>
+          During the outage phase, both sides stop receiving frames. The smart mode keeps its last-known-good state visible and marks stale rows once TTL expires.
+        </div>
+        <div class="legend-card">
+          <strong>Recovery</strong>
+          After the outage, the smart side should repopulate cleanly and recover steady cadence faster than the burstier baseline feed.
+        </div>
+      </div>
+    </section>
+
+    <section class="frame-grid">
+      <article class="frame-card">
+        <div class="frame-head">
+          <h2 id="left-title">Baseline v0</h2>
+        </div>
+        <div class="frame-meta" id="left-url"></div>
+        <iframe id="left-frame" title="Baseline demo dashboard"></iframe>
+      </article>
+      <article class="frame-card">
+        <div class="frame-head">
+          <h2 id="right-title">Smart v4</h2>
+        </div>
+        <div class="frame-meta" id="right-url"></div>
+        <iframe id="right-frame" title="Smart demo dashboard"></iframe>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const defaults = {
+      left: "http://127.0.0.1:9000/ui/index.html",
+      right: "http://127.0.0.1:9001/ui/index.html",
+      leftLabel: "Baseline v0",
+      rightLabel: "Smart v4",
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const leftUrl = params.get("left") || defaults.left;
+    const rightUrl = params.get("right") || defaults.right;
+    const leftLabel = params.get("leftLabel") || defaults.leftLabel;
+    const rightLabel = params.get("rightLabel") || defaults.rightLabel;
+
+    function renderSource(targetId, url) {
+      const target = document.getElementById(targetId);
+      const code = document.createElement("code");
+      target.textContent = "Source: ";
+      code.textContent = url;
+      target.appendChild(code);
+    }
+
+    document.getElementById("left-title").textContent = leftLabel;
+    document.getElementById("right-title").textContent = rightLabel;
+    renderSource("left-url", leftUrl);
+    renderSource("right-url", rightUrl);
+    document.getElementById("left-frame").src = leftUrl;
+    document.getElementById("right-frame").src = rightUrl;
+  </script>
+</body>
+</html>

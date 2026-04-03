@@ -25,11 +25,15 @@ Agrasandhani is a local MQTT-to-WebSocket sensor gateway for replaying datasets 
 - `gateway/forwarder.py`: gateway forwarding modes, aggregate-frame batching, metrics, and CSV run logger
 - `gateway/schemas.py`: shared payload validation
 - `ui/index.html`: dashboard with live measurement counters and display-event CSV export
+- `ui/demo_compare.html`: side-by-side baseline-versus-smart demo page
 - `experiments/run_one.ps1`: standard 60s run harness
 - `experiments/run_one.sh`: standard 60s run harness for macOS/Linux
 - `experiments/impairment_proxy.py`: app-layer impairment proxy that serves the dashboard and proxies `/ws` plus `/config`
 - `experiments/scenarios/*.json`: deterministic impairment phase definitions
 - `experiments/run_sweep.py`: comparison runner for `v0`, `v2`, and `v4` scenario sweeps
+- `experiments/run_demo.py`: live demo runner for simultaneous `v0` versus `v4` comparison
+- `experiments/run_demo.ps1`: PowerShell wrapper for the M5 demo harness
+- `experiments/run_demo.sh`: Bash wrapper for the M5 demo harness
 - `experiments/analyze_run.py`: derives latency, bandwidth, loss, lateness, and freshness metrics
 - `experiments/plot_sweep.py`: generates sweep plots from per-run summaries
 
@@ -546,6 +550,68 @@ Analysis notes:
 Sweep-level plots are written to `experiments/logs/<SWEEP_ID>/plots/`.
 
 The Linux-only `tc netem` cross-check helpers live under `experiments/netem/`.
+
+## M5 Demo
+
+The M5 demo harness runs the baseline `v0` gateway and the smart `v4` gateway at the same time against the same MQTT replay feed and the same deterministic impairment scenario. It opens a side-by-side compare page so the burst, stale, and recovery differences are visible live.
+
+Default demo behavior:
+
+- scenario: `experiments/scenarios/demo_v0_vs_v4.json` with `6s clean`, `4s outage`, and `10s recovery`
+- simulator run: `20s` total with burst enabled at `2s` for `4s` using an `8x` burst multiplier
+- ports: baseline gateway `8000`, smart gateway `8001`, baseline proxy `9000`, smart proxy `9001`
+- compare page: served from the baseline proxy at `/ui/demo_compare.html`
+
+One-command launch:
+
+```powershell
+.\experiments\run_demo.ps1
+```
+
+```bash
+chmod +x ./experiments/run_demo.sh
+./experiments/run_demo.sh
+```
+
+Direct Python entrypoint:
+
+```powershell
+python .\experiments\run_demo.py
+```
+
+```bash
+python ./experiments/run_demo.py
+```
+
+Non-interactive smoke run:
+
+```powershell
+python .\experiments\run_demo.py --run-id m5-demo-smoke --no-open-browser
+```
+
+```bash
+python ./experiments/run_demo.py --run-id m5-demo-smoke --no-open-browser
+```
+
+Expected live differences:
+
+- `v0` shows higher update-rate churn during the burst window because every incoming message is forwarded directly
+- `v4` shifts to aggregate frames, keeps the display steadier, and shows the runtime batch window in the dashboard summary
+- during the outage phase both sides stop receiving frames, but `v4` keeps the last-known-good rows visible and marks them stale once the TTL expires
+- after recovery the `v4` side should settle back into a cleaner cadence more quickly than the raw baseline feed
+
+Artifacts are written to `experiments/logs/<RUN_ID>/demo/`:
+
+- `baseline_gateway.stdout.log`, `baseline_gateway.stderr.log`
+- `smart_gateway.stdout.log`, `smart_gateway.stderr.log`
+- `baseline_proxy.stdout.log`, `baseline_proxy.stderr.log`
+- `smart_proxy.stdout.log`, `smart_proxy.stderr.log`
+- `simulator.stdout.log`, `simulator.stderr.log`
+- `baseline_gateway_metrics.json`, `smart_gateway_metrics.json`
+- `baseline_proxy_metrics.json`, `smart_proxy_metrics.json`
+- `baseline_gateway_forward_log.csv`, `smart_gateway_forward_log.csv`
+- `baseline_proxy_frame_log.csv`, `smart_proxy_frame_log.csv`
+- `manifest.json` with the compare URL and effective demo configuration
 
 ## Environment Variables
 

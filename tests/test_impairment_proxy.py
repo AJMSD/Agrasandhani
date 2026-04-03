@@ -127,6 +127,12 @@ class ImpairmentProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     html = await asyncio.to_thread(self._fetch_text, f"http://127.0.0.1:{proxy_port}/ui/index.html")
                     self.assertIn("Agrasandhani Dashboard", html)
 
+                    compare_html = await asyncio.to_thread(
+                        self._fetch_text,
+                        f"http://127.0.0.1:{proxy_port}/ui/demo_compare.html",
+                    )
+                    self.assertIn("Agrasandhani Demo Compare", compare_html)
+
                     async with connect(f"ws://127.0.0.1:{proxy_port}/ws", max_size=None) as client:
                         first = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
                         second = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
