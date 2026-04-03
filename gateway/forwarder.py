@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import ValidationError
 from starlette.websockets import WebSocket
 
 from gateway.mqtt_ingest import MqttEnvelope
@@ -19,6 +20,17 @@ LOGGER = logging.getLogger(__name__)
 
 GatewayMode = Literal["v0", "v1", "v2", "v3", "v4"]
 FrameFlushReason = Literal["time", "threshold", "snapshot"]
+
+
+def summarize_invalid_payload_error(exc: Exception) -> str:
+    if isinstance(exc, json.JSONDecodeError):
+        return f"invalid_json:{exc.msg}"
+    if isinstance(exc, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}:{error['msg']}"
+            for error in exc.errors()
+        )
+    return exc.__class__.__name__
 
 
 def clamp(value: int, lower: int, upper: int) -> int:
@@ -335,9 +347,13 @@ class BaselineForwarder:
         try:
             payload = json.loads(envelope.payload.decode("utf-8"))
             message = SensorMessage.model_validate(payload)
-        except Exception:
+        except (json.JSONDecodeError, ValidationError) as exc:
             self._metrics.invalid_msgs += 1
-            LOGGER.exception("Failed to validate MQTT payload from topic %s", envelope.topic)
+            LOGGER.warning(
+                "Dropped invalid MQTT payload from topic %s: %s",
+                envelope.topic,
+                summarize_invalid_payload_error(exc),
+            )
             return
 
         if self._config.mode == "v0":

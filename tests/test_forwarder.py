@@ -336,17 +336,21 @@ class ForwarderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         task = asyncio.create_task(forwarder.run_forever())
-        await inbound_queue.put(make_envelope(msg_id=1, value=21.0))
-        await inbound_queue.put(make_envelope(raw_payload=b'{"sensor_id":101,"msg_id":2}', metric_type="temperature"))
-        await inbound_queue.put(make_envelope(msg_id=3, metric_type="humidity", value=48.0, received_at_ms=1_700_000_000_250))
-        await asyncio.wait_for(inbound_queue.join(), timeout=1)
-        await forwarder._flush_pending(flush_reason="threshold")
-        await self._stop_task(task)
+        with self.assertLogs("gateway.forwarder", level="WARNING") as captured_logs:
+            await inbound_queue.put(make_envelope(msg_id=1, value=21.0))
+            await inbound_queue.put(make_envelope(raw_payload=b'{"sensor_id":101,"msg_id":2}', metric_type="temperature"))
+            await inbound_queue.put(make_envelope(msg_id=3, metric_type="humidity", value=48.0, received_at_ms=1_700_000_000_250))
+            await asyncio.wait_for(inbound_queue.join(), timeout=1)
+            await forwarder._flush_pending(flush_reason="threshold")
+            await self._stop_task(task)
 
         frame = json.loads(websocket.messages[0])
         self.assertEqual(frame["update_count"], 2)
         metrics = forwarder.metrics_snapshot(started_at_monotonic=0.0)
         self.assertEqual(metrics["invalid_msgs"], 1)
+        self.assertEqual(len(captured_logs.output), 1)
+        self.assertIn("Dropped invalid MQTT payload", captured_logs.output[0])
+        self.assertNotIn("Traceback", captured_logs.output[0])
         run_logger.close()
 
     async def test_runtime_config_update_applies_safe_fields(self) -> None:

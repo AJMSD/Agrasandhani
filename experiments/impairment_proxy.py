@@ -274,7 +274,13 @@ app = create_app()
 
 def main() -> None:
     settings = load_settings()
-    uvicorn.run("experiments.impairment_proxy:app", host=settings.impair_host, port=settings.impair_port, reload=False)
+    uvicorn.run(
+        "experiments.impairment_proxy:app",
+        host=settings.impair_host,
+        port=settings.impair_port,
+        reload=False,
+        ws="websockets-sansio",
+    )
 
 
 if __name__ == "__main__":

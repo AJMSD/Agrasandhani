@@ -16,18 +16,18 @@ class AnalysisTests(unittest.TestCase):
             run_dir = Path(tmp_dir_name)
             self._write_csv(
                 run_dir / "gateway_forward_log.csv",
-                ["sensor_id", "metric_type", "msg_id", "ts_sent"],
+                ["frame_id", "sensor_id", "metric_type", "msg_id", "ts_sent"],
                 [
-                    ["101", "temperature", "1", "1000"],
-                    ["101", "temperature", "2", "2000"],
+                    ["1", "101", "temperature", "1", "1000"],
+                    ["2", "101", "temperature", "2", "2000"],
                 ],
             )
             self._write_csv(
                 run_dir / "proxy_frame_log.csv",
-                ["event", "payload_bytes", "downstream_sent_ms"],
+                ["event", "payload_bytes", "downstream_sent_ms", "upstream_received_ms", "outage"],
                 [
-                    ["sent", "150", "3000"],
-                    ["sent", "180", "3500"],
+                    ["sent", "150", "3000", "2500", "false"],
+                    ["dropped", "180", "", "3200", "true"],
                 ],
             )
             self._write_csv(
@@ -61,11 +61,141 @@ class AnalysisTests(unittest.TestCase):
             summary = analyze_run(run_dir, late_threshold_ms=500)
 
             self.assertEqual(summary["missing_update_count"], 1)
+            self.assertEqual(summary["matching_mode"], "exact_sensor_metric_msg_ts")
+            self.assertTrue(summary["missing_update_count_exact"])
+            self.assertEqual(summary["proxy_frame_alignment_mode"], "frame_order_exact")
+            self.assertEqual(summary["missing_updates_outage_drop_count"], 1)
+            self.assertEqual(summary["missing_updates_non_outage_drop_count"], 0)
+            self.assertEqual(summary["missing_updates_delivered_frame_count"], 0)
+            self.assertEqual(summary["missing_updates_unclassified_count"], 0)
             self.assertEqual(summary["late_count"], 1)
             self.assertEqual(summary["proxy_dropped_frames"], 1)
             self.assertAlmostEqual(summary["stale_fraction"], 0.0)
             self.assertTrue((run_dir / "summary.json").exists())
             self.assertTrue((run_dir / "timeseries.csv").exists())
+
+    def test_analyze_run_marks_legacy_gateway_logs_as_approximate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            run_dir = Path(tmp_dir_name)
+            self._write_csv(
+                run_dir / "gateway_forward_log.csv",
+                ["frame_id", "sensor_id", "msg_id", "ts_sent"],
+                [["1", "101", "1", "1000"]],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ],
+                [],
+            )
+
+            summary = analyze_run(run_dir)
+
+            self.assertEqual(summary["matching_mode"], "legacy_sensor_msg_ts_approximate")
+            self.assertFalse(summary["missing_update_count_exact"])
+            self.assertIn("matching_note", summary)
+            self.assertEqual(summary["proxy_frame_alignment_mode"], "unavailable")
+
+    def test_analyze_run_classifies_missing_updates_by_proxy_frame_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            run_dir = Path(tmp_dir_name)
+            self._write_csv(
+                run_dir / "gateway_forward_log.csv",
+                ["frame_id", "sensor_id", "metric_type", "msg_id", "ts_sent"],
+                [
+                    ["1", "101", "temperature", "1", "1000"],
+                    ["2", "102", "humidity", "2", "2000"],
+                    ["3", "103", "pressure", "3", "3000"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "proxy_frame_log.csv",
+                ["event", "payload_bytes", "downstream_sent_ms", "upstream_received_ms", "outage"],
+                [
+                    ["dropped", "150", "", "1000", "true"],
+                    ["dropped", "120", "", "2000", "false"],
+                    ["sent", "180", "3600", "3000", "false"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ],
+                [],
+            )
+
+            summary = analyze_run(run_dir)
+
+            self.assertEqual(summary["proxy_frame_alignment_mode"], "frame_order_exact")
+            self.assertEqual(summary["missing_update_count"], 3)
+            self.assertEqual(summary["missing_updates_outage_drop_count"], 1)
+            self.assertEqual(summary["missing_updates_non_outage_drop_count"], 1)
+            self.assertEqual(summary["missing_updates_delivered_frame_count"], 1)
+            self.assertEqual(summary["missing_updates_unclassified_count"], 0)
+
+    def test_analyze_run_marks_unaligned_proxy_frames_as_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            run_dir = Path(tmp_dir_name)
+            self._write_csv(
+                run_dir / "gateway_forward_log.csv",
+                ["frame_id", "sensor_id", "metric_type", "msg_id", "ts_sent"],
+                [
+                    ["1", "101", "temperature", "1", "1000"],
+                    ["2", "102", "humidity", "2", "2000"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "proxy_frame_log.csv",
+                ["event", "payload_bytes", "downstream_sent_ms", "upstream_received_ms", "outage"],
+                [
+                    ["dropped", "150", "", "1000", "true"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ],
+                [],
+            )
+
+            summary = analyze_run(run_dir)
+
+            self.assertEqual(summary["proxy_frame_alignment_mode"], "unavailable")
+            self.assertEqual(summary["missing_updates_outage_drop_count"], 0)
+            self.assertEqual(summary["missing_updates_non_outage_drop_count"], 0)
+            self.assertEqual(summary["missing_updates_delivered_frame_count"], 0)
+            self.assertEqual(summary["missing_updates_unclassified_count"], 2)
+            self.assertIn("proxy_frame_alignment_note", summary)
 
     def test_plot_sweep_creates_expected_png_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:

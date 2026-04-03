@@ -11,7 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import uvicorn
-import websockets
+from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
 
 from experiments import impairment_proxy
 
@@ -51,6 +52,13 @@ class _ConfigHandler(BaseHTTPRequestHandler):
 
 class ImpairmentProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_proxy_relays_ws_and_proxies_config(self) -> None:
+        loop = asyncio.get_running_loop()
+        original_debug = loop.get_debug()
+        original_slow_callback_duration = loop.slow_callback_duration
+        loop.set_debug(False)
+        loop.slow_callback_duration = 60.0
+        self.addAsyncCleanup(self._restore_loop_debug_settings, loop, original_debug, original_slow_callback_duration)
+
         http_port = _pick_free_port()
         ws_port = _pick_free_port()
         proxy_port = _pick_free_port()
@@ -99,8 +107,8 @@ class ImpairmentProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
             app = impairment_proxy.create_app(settings)
 
-            async with websockets.serve(upstream_handler, "127.0.0.1", ws_port):
-                config = uvicorn.Config(app, host="127.0.0.1", port=proxy_port, log_level="warning")
+            async with serve(upstream_handler, "127.0.0.1", ws_port):
+                config = uvicorn.Config(app, host="127.0.0.1", port=proxy_port, log_level="warning", ws="websockets-sansio")
                 server = uvicorn.Server(config)
                 server_task = asyncio.create_task(server.serve())
                 try:
@@ -119,7 +127,7 @@ class ImpairmentProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     html = await asyncio.to_thread(self._fetch_text, f"http://127.0.0.1:{proxy_port}/ui/index.html")
                     self.assertIn("Agrasandhani Dashboard", html)
 
-                    async with websockets.connect(f"ws://127.0.0.1:{proxy_port}/ws", max_size=None) as client:
+                    async with connect(f"ws://127.0.0.1:{proxy_port}/ws", max_size=None) as client:
                         first = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
                         second = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
 
@@ -164,6 +172,15 @@ class ImpairmentProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.load(response)
+
+    @staticmethod
+    async def _restore_loop_debug_settings(
+        loop: asyncio.AbstractEventLoop,
+        original_debug: bool,
+        original_slow_callback_duration: float,
+    ) -> None:
+        loop.set_debug(original_debug)
+        loop.slow_callback_duration = original_slow_callback_duration
 
 
 if __name__ == "__main__":

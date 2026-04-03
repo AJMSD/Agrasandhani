@@ -220,7 +220,13 @@ async def websocket_updates(websocket: WebSocket) -> None:
 
 def main() -> None:
     settings = load_settings()
-    uvicorn.run("gateway.app:app", host=settings.ws_host, port=settings.ws_port, reload=False)
+    uvicorn.run(
+        "gateway.app:app",
+        host=settings.ws_host,
+        port=settings.ws_port,
+        reload=False,
+        ws="websockets-sansio",
+    )
 
 
 if __name__ == "__main__":

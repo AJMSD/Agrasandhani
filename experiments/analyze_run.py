@@ -30,6 +30,57 @@ def _percentile(values: list[float], pct: float) -> float:
     return float(ordered[lower] * (1 - weight) + ordered[upper] * weight)
 
 
+def _build_message_key(row: dict[str, str], *, include_metric_type: bool) -> tuple[str, ...]:
+    if include_metric_type:
+        return (row["sensor_id"], row.get("metric_type", ""), row["msg_id"], row["ts_sent"])
+    return (row["sensor_id"], row["msg_id"], row["ts_sent"])
+
+
+def _ordered_gateway_frames(
+    gateway_rows: list[dict[str, str]],
+    *,
+    include_metric_type: bool,
+) -> tuple[list[str], dict[tuple[str, ...], str]] | None:
+    if not gateway_rows:
+        return [], {}
+
+    frame_ids: list[str] = []
+    update_to_frame: dict[tuple[str, ...], str] = {}
+    seen_frames: set[str] = set()
+    for row in gateway_rows:
+        frame_id = row.get("frame_id", "")
+        if not frame_id:
+            return None
+        if frame_id not in seen_frames:
+            seen_frames.add(frame_id)
+            frame_ids.append(frame_id)
+        update_to_frame[_build_message_key(row, include_metric_type=include_metric_type)] = frame_id
+    return frame_ids, update_to_frame
+
+
+def _ordered_proxy_events(proxy_rows: list[dict[str, str]]) -> list[dict[str, object]]:
+    ordered_events: list[tuple[int, int, dict[str, object]]] = []
+    for index, row in enumerate(proxy_rows):
+        if row.get("event") not in {"sent", "dropped"}:
+            continue
+        upstream_received_ms = row.get("upstream_received_ms", "")
+        if not upstream_received_ms:
+            return []
+        ordered_events.append(
+            (
+                int(upstream_received_ms),
+                index,
+                {
+                    "event": row["event"],
+                    "outage": row.get("outage", "").lower() == "true",
+                    "phase_name": row.get("phase_name", ""),
+                },
+            )
+        )
+    ordered_events.sort(key=lambda item: (item[0], item[1]))
+    return [event for _, _, event in ordered_events]
+
+
 def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, Any]:
     gateway_rows = _load_csv(run_dir / "gateway_forward_log.csv")
     proxy_rows = _load_csv(run_dir / "proxy_frame_log.csv")
@@ -40,16 +91,66 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
     stale_flags = [row["stale_at_display"].lower() == "true" for row in browser_rows]
 
     if gateway_rows and "metric_type" in gateway_rows[0]:
-        gateway_keys = {(row["sensor_id"], row.get("metric_type", ""), row["msg_id"], row["ts_sent"]) for row in gateway_rows}
-        browser_keys = {(row["sensor_id"], row.get("metric_type", ""), row["msg_id"], row["ts_sent"]) for row in browser_rows}
+        matching_mode = "exact_sensor_metric_msg_ts"
+        missing_update_count_exact = True
+        gateway_keys = {_build_message_key(row, include_metric_type=True) for row in gateway_rows}
+        browser_keys = {_build_message_key(row, include_metric_type=True) for row in browser_rows}
     else:
-        gateway_keys = {(row["sensor_id"], row["msg_id"], row["ts_sent"]) for row in gateway_rows}
-        browser_keys = {(row["sensor_id"], row["msg_id"], row["ts_sent"]) for row in browser_rows}
+        matching_mode = "legacy_sensor_msg_ts_approximate"
+        missing_update_count_exact = False
+        gateway_keys = {_build_message_key(row, include_metric_type=False) for row in gateway_rows}
+        browser_keys = {_build_message_key(row, include_metric_type=False) for row in browser_rows}
     missing_updates = sorted(gateway_keys - browser_keys)
 
     missing_by_sensor: dict[str, int] = defaultdict(int)
     for missing in missing_updates:
         missing_by_sensor[missing[0]] += 1
+
+    proxy_frame_alignment_mode = "unavailable"
+    proxy_frame_alignment_note: str | None = None
+    missing_updates_outage_drop_count = 0
+    missing_updates_non_outage_drop_count = 0
+    missing_updates_delivered_frame_count = 0
+    missing_updates_unclassified_count = len(missing_updates)
+
+    gateway_frame_info = _ordered_gateway_frames(
+        gateway_rows,
+        include_metric_type=missing_update_count_exact,
+    )
+    proxy_events = _ordered_proxy_events(proxy_rows)
+    if gateway_frame_info is not None:
+        gateway_frame_ids, update_to_frame = gateway_frame_info
+        if len(gateway_frame_ids) == len(proxy_events):
+            proxy_frame_alignment_mode = "frame_order_exact"
+            missing_updates_unclassified_count = 0
+            frame_to_proxy_event = {
+                frame_id: proxy_event for frame_id, proxy_event in zip(gateway_frame_ids, proxy_events, strict=True)
+            }
+            for missing_update in missing_updates:
+                frame_id = update_to_frame.get(missing_update)
+                if frame_id is None:
+                    missing_updates_unclassified_count += 1
+                    continue
+                proxy_event = frame_to_proxy_event.get(frame_id)
+                if proxy_event is None:
+                    missing_updates_unclassified_count += 1
+                elif proxy_event["event"] == "dropped":
+                    if proxy_event["outage"]:
+                        missing_updates_outage_drop_count += 1
+                    else:
+                        missing_updates_non_outage_drop_count += 1
+                elif proxy_event["event"] == "sent":
+                    missing_updates_delivered_frame_count += 1
+                else:
+                    missing_updates_unclassified_count += 1
+        else:
+            proxy_frame_alignment_note = (
+                "proxy/gateway frame counts do not match; missing-update cause attribution was skipped"
+            )
+    else:
+        proxy_frame_alignment_note = (
+            "gateway_forward_log.csv lacks frame_id; missing-update cause attribution was skipped"
+        )
 
     bandwidth_by_second: Counter[int] = Counter()
     frame_rate_by_second: Counter[int] = Counter()
@@ -78,6 +179,9 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
         "variant": manifest.get("variant", ""),
         "scenario": manifest.get("scenario", ""),
         "mqtt_qos": manifest.get("mqtt_qos", ""),
+        "matching_mode": matching_mode,
+        "missing_update_count_exact": missing_update_count_exact,
+        "proxy_frame_alignment_mode": proxy_frame_alignment_mode,
         "browser_event_count": len(browser_rows),
         "gateway_update_count": len(gateway_rows),
         "proxy_sent_frame_count": sum(1 for row in proxy_rows if row["event"] == "sent"),
@@ -90,6 +194,10 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
         "late_threshold_ms": late_threshold_ms,
         "late_count": sum(1 for value in latencies if value > late_threshold_ms),
         "missing_update_count": len(missing_updates),
+        "missing_updates_outage_drop_count": missing_updates_outage_drop_count,
+        "missing_updates_non_outage_drop_count": missing_updates_non_outage_drop_count,
+        "missing_updates_delivered_frame_count": missing_updates_delivered_frame_count,
+        "missing_updates_unclassified_count": missing_updates_unclassified_count,
         "missing_sensor_count": len(missing_by_sensor),
         "gateway_mqtt_in_msgs": gateway_metrics.get("mqtt_in_msgs", 0),
         "proxy_dropped_frames": proxy_metrics.get("dropped_frames", 0),
@@ -99,6 +207,10 @@ def analyze_run(run_dir: Path, *, late_threshold_ms: int = 1000) -> dict[str, An
         "max_frame_rate_per_s": max(frame_rate_by_second.values(), default=0),
         "max_update_rate_per_s": max(update_rate_by_second.values(), default=0),
     }
+    if not missing_update_count_exact:
+        summary["matching_note"] = "gateway_forward_log.csv lacks metric_type; rerun with current schema for exact missing-update analysis"
+    if proxy_frame_alignment_note is not None:
+        summary["proxy_frame_alignment_note"] = proxy_frame_alignment_note
 
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 

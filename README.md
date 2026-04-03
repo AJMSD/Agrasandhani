@@ -172,6 +172,16 @@ npm install
 npx playwright install chromium
 ```
 
+You can verify the browser-capture prerequisites without starting a run:
+
+```powershell
+node .\experiments\capture_dashboard.mjs --check-only
+```
+
+```bash
+node ./experiments/capture_dashboard.mjs --check-only
+```
+
 ```bash
 npm install
 npx playwright install chromium
@@ -478,6 +488,18 @@ python .\experiments\run_sweep.py --burst-enabled
 python ./experiments/run_sweep.py --burst-enabled
 ```
 
+Run the reusable short smoke profile for post-change validation:
+
+```powershell
+python .\experiments\run_sweep.py --profile short-smoke
+```
+
+```bash
+python ./experiments/run_sweep.py --profile short-smoke
+```
+
+The short smoke profile exercises `v0`, `v2`, and `v4` with QoS `0` and `1` across `clean`, `loss_5pct`, and `outage_5s` using a 16-second replay window and a 20-sensor cap so loss and outage effects surface reliably during validation.
+
 Useful overrides:
 
 ```powershell
@@ -511,6 +533,15 @@ Each run directory under `experiments/logs/<SWEEP_ID>/` includes:
 - `dashboard_summary.json`
 - `dashboard.png`
 - `summary.json`, `summary.csv`, and `timeseries.csv`
+
+Analysis notes:
+
+- current runs use exact missing-update matching on `(sensor_id, metric_type, msg_id, ts_sent)`
+- older `gateway_forward_log.csv` files without `metric_type` are marked as approximate in `summary.json`
+- use `matching_mode` and `missing_update_count_exact` in the summary to distinguish exact vs legacy analysis
+- use `proxy_frame_alignment_mode` to tell whether missing-update cause attribution was derived from exact gateway/proxy frame alignment or skipped as unavailable
+- `missing_updates_outage_drop_count`, `missing_updates_non_outage_drop_count`, `missing_updates_delivered_frame_count`, and `missing_updates_unclassified_count` break missing updates down by proxy-frame outcome when alignment is available
+- `PRD.md` and `PROJECT_CHECKLIST.md` are local planning artifacts and should not be staged or pushed with code changes
 
 Sweep-level plots are written to `experiments/logs/<SWEEP_ID>/plots/`.
 
