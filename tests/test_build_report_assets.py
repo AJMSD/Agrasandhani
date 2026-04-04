@@ -93,6 +93,81 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
 
+    def test_build_report_assets_writes_batch_window_tradeoff_outputs_when_batch_sweep_is_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            base_dir = Path(tmp_dir_name)
+            intel_sweep = base_dir / "final-intel-primary-20260403"
+            aot_sweep = base_dir / "final-aot-validation-20260403"
+            demo_dir = base_dir / "final-demo-20260403" / "demo"
+            batch_sweep = base_dir / "intel-v2-batch-window-20260403"
+            output_dir = base_dir / "report-assets"
+
+            for variant, latency, frames, bytes_out in (("v0", 8, 118, 9800), ("v2", 200, 23, 13800), ("v4", 248, 19, 14900)):
+                self._create_intel_run(intel_sweep, variant, "clean", 0, latency_p95=latency, frames=frames, bytes_out=bytes_out)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 0, latency_p95=latency + 4, frames=frames - 5, bytes_out=bytes_out - 300)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 1, latency_p95=latency + 5, frames=frames - 5, bytes_out=bytes_out - 300)
+            for scenario in ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"):
+                for variant, latency, frames, bytes_out in (("v0", 10, 100, 9000), ("v2", 220, 24, 13000), ("v4", 245, 20, 14000)):
+                    for qos in (0, 1):
+                        self._create_intel_run(
+                            intel_sweep,
+                            variant,
+                            scenario,
+                            qos,
+                            latency_p95=latency,
+                            frames=frames,
+                            bytes_out=bytes_out,
+                        )
+
+            self._create_aot_run(aot_sweep, "v0", "clean", 0, latency_p95=12, frames=80, bytes_out=6200)
+            self._create_aot_run(aot_sweep, "v4", "clean", 0, latency_p95=230, frames=18, bytes_out=7100)
+            self._create_aot_run(aot_sweep, "v0", "outage_5s", 0, latency_p95=15, frames=40, bytes_out=4000)
+            self._create_aot_run(aot_sweep, "v4", "outage_5s", 0, latency_p95=240, frames=10, bytes_out=5000)
+
+            for batch_window_ms, latency_p95, latency_mean, frame_rate, frames, bytes_out in [
+                (50, 120, 90, 12, 40, 13100),
+                (100, 170, 110, 8, 28, 13020),
+                (250, 260, 170, 4, 15, 12980),
+                (500, 410, 260, 2, 9, 12910),
+                (1000, 780, 410, 1, 5, 12890),
+            ]:
+                self._create_batch_window_run(
+                    batch_sweep,
+                    batch_window_ms=batch_window_ms,
+                    latency_p95=latency_p95,
+                    latency_mean=latency_mean,
+                    max_frame_rate_per_s=frame_rate,
+                    frames=frames,
+                    bytes_out=bytes_out,
+                )
+
+            self._create_demo_artifacts(demo_dir)
+
+            report_dir = base_dir / "report"
+            with patch("experiments.build_report_assets.REPORT_DIR", report_dir):
+                manifest = build_report_assets(
+                    intel_sweep_dir=intel_sweep,
+                    aot_sweep_dir=aot_sweep,
+                    demo_dir=demo_dir,
+                    output_dir=output_dir,
+                    intel_batch_sweep_dir=batch_sweep,
+                )
+
+            self.assertEqual(manifest["intel_batch_sweep_dir"], str(batch_sweep))
+            self.assertTrue((output_dir / "tables" / "intel_v2_batch_window_tradeoff.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").exists())
+            self.assertTrue((output_dir / "figures" / "intel_v2_batch_window_tradeoff.png").exists())
+            tradeoff_table = (output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").read_text(encoding="utf-8")
+            self.assertIn("| 50 | 120.0 | 90.0 | 12 | 40 | 13100 | 1310 | 0.0 |", tradeoff_table)
+            key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
+            self.assertIn("Intel V2 batch-window sweep moved latency p95", key_claims)
+            final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn("The Intel V2 batch-window sweep answers the second paper question directly.", final_report)
+            self.assertIn("intel_v2_batch_window_tradeoff.png", final_report)
+            deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_v2_batch_window_tradeoff.csv", deliverable_gate)
+            self.assertIn("intel-v2-batch-window-20260403", deliverable_gate)
+
     def _create_intel_run(
         self,
         sweep_dir: Path,
@@ -179,6 +254,36 @@ class BuildReportAssetsTests(unittest.TestCase):
             json.dumps({"summary": {"latestRowCount": 6, "messageCount": 198, "frameCount": 33, "staleCount": 6}}),
             encoding="utf-8",
         )
+
+    def _create_batch_window_run(
+        self,
+        sweep_dir: Path,
+        *,
+        batch_window_ms: int,
+        latency_p95: int,
+        latency_mean: int,
+        max_frame_rate_per_s: int,
+        frames: int,
+        bytes_out: int,
+    ) -> None:
+        run_dir = sweep_dir / f"v2-qos0-clean-bw{batch_window_ms}ms"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "run_id": run_dir.name,
+            "variant": "v2",
+            "scenario": "clean",
+            "mqtt_qos": 0,
+            "latency_mean_ms": latency_mean,
+            "latency_p95_ms": latency_p95,
+            "latency_p99_ms": latency_p95 + 20,
+            "proxy_downstream_frames_out": frames,
+            "proxy_downstream_bytes_out": bytes_out,
+            "max_bandwidth_bytes_per_s": bytes_out // 10,
+            "max_frame_rate_per_s": max_frame_rate_per_s,
+            "stale_fraction": 0.0,
+            "effective_batch_window_ms": batch_window_ms,
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
     def _write_dashboard_measurements(self, path: Path, latencies: list[int]) -> None:
         with path.open("w", encoding="utf-8", newline="") as handle:

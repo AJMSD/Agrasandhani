@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPORT_DIR = BASE_DIR / "report"
 INTEL_BANDWIDTH_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "outage_5s")
+INTEL_BATCH_WINDOW_SWEEP_WINDOWS = (50, 100, 250, 500, 1000)
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -150,6 +151,59 @@ def _format_bandwidth_comparison_series(
     return ", ".join(parts)
 
 
+def _build_intel_batch_window_tradeoff_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    tradeoff_rows: list[dict[str, object]] = []
+    for row in rows:
+        if row["variant"] != "v2" or row["scenario"] != "clean" or int(row["mqtt_qos"]) != 0:
+            continue
+        batch_window_ms = int(row.get("effective_batch_window_ms", row.get("batch_window_ms", 0)))
+        if batch_window_ms <= 0:
+            continue
+        tradeoff_rows.append(
+            {
+                "batch_window_ms": batch_window_ms,
+                "latency_p95_ms": float(row["latency_p95_ms"]),
+                "latency_mean_ms": float(row["latency_mean_ms"]),
+                "max_frame_rate_per_s": int(row["max_frame_rate_per_s"]),
+                "proxy_downstream_frames_out": int(row["proxy_downstream_frames_out"]),
+                "proxy_downstream_bytes_out": int(row["proxy_downstream_bytes_out"]),
+                "max_bandwidth_bytes_per_s": int(row["max_bandwidth_bytes_per_s"]),
+                "stale_fraction": float(row["stale_fraction"]),
+                "run_dir": str(row["run_dir"]),
+            }
+        )
+    tradeoff_rows.sort(key=lambda candidate: candidate["batch_window_ms"])
+    if not tradeoff_rows:
+        raise ValueError("No Intel V2 qos0 clean rows were found for the batch-window sweep")
+    return tradeoff_rows
+
+
+def _describe_batch_window_payload_shift(batch_rows: list[dict[str, object]]) -> str:
+    first_row = batch_rows[0]
+    last_row = batch_rows[-1]
+    percent_delta = _percent_delta(
+        float(first_row["proxy_downstream_bytes_out"]),
+        float(last_row["proxy_downstream_bytes_out"]),
+    )
+    if percent_delta is None:
+        return "payload-byte change could not be computed for the batch-window sweep"
+    delta_label = _format_delta(
+        float(first_row["proxy_downstream_bytes_out"]),
+        float(last_row["proxy_downstream_bytes_out"]),
+    )
+    if abs(percent_delta) < 10.0:
+        return (
+            f"payload bytes moved from {first_row['proxy_downstream_bytes_out']} at {first_row['batch_window_ms']} ms "
+            f"to {last_row['proxy_downstream_bytes_out']} at {last_row['batch_window_ms']} ms ({delta_label}), "
+            "which was not material relative to the latency and frame-rate shift"
+        )
+    return (
+        f"payload bytes moved from {first_row['proxy_downstream_bytes_out']} at {first_row['batch_window_ms']} ms "
+        f"to {last_row['proxy_downstream_bytes_out']} at {last_row['batch_window_ms']} ms ({delta_label}), "
+        "so payload volume also changed materially across the sweep"
+    )
+
+
 def _plot_latency_cdf(rows: list[dict[str, object]], *, scenario: str, mqtt_qos: int, output_path: Path) -> None:
     figure = plt.figure(figsize=(8, 5))
     for variant in ("v0", "v2", "v4"):
@@ -199,6 +253,42 @@ def _plot_timeseries(
     plt.close(figure)
 
 
+def _plot_batch_window_tradeoff(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    batch_windows = [row["batch_window_ms"] for row in rows]
+    latency_values = [row["latency_p95_ms"] for row in rows]
+    frame_rate_values = [row["max_frame_rate_per_s"] for row in rows]
+
+    figure, left_axis = plt.subplots(figsize=(8, 5))
+    right_axis = left_axis.twinx()
+
+    left_line = left_axis.plot(
+        batch_windows,
+        latency_values,
+        marker="o",
+        color="tab:red",
+        label="Latency p95 (ms)",
+    )[0]
+    right_line = right_axis.plot(
+        batch_windows,
+        frame_rate_values,
+        marker="s",
+        color="tab:blue",
+        label="Max frame rate (/s)",
+    )[0]
+
+    left_axis.set_xlabel("Batch window (ms)")
+    left_axis.set_ylabel("Latency p95 (ms)", color="tab:red")
+    right_axis.set_ylabel("Max frame rate per second", color="tab:blue")
+    left_axis.set_title("Intel V2 batch-window tradeoff")
+    left_axis.set_xticks(batch_windows)
+    left_axis.grid(True, axis="y", alpha=0.3)
+    left_axis.legend([left_line, right_line], [left_line.get_label(), right_line.get_label()], loc="best")
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _load_demo_summary(demo_dir: Path, side: str) -> dict[str, int]:
     payload = _load_json(demo_dir / f"{side}_dashboard" / "dashboard_summary.json")
     summary = payload.get("summary", {})
@@ -224,6 +314,7 @@ def _build_key_claims(
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
     demo_dir: Path,
+    intel_batch_rows: list[dict[str, object]] | None = None,
 ) -> str:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -273,6 +364,18 @@ def _build_key_claims(
             f"and V4 rendered {aot_clean_v4['proxy_downstream_frames_out']} frames with p95 latencies of {aot_clean_v0['latency_p95_ms']} ms and {aot_clean_v4['latency_p95_ms']} ms respectively."
         ),
     ]
+    if intel_batch_rows is not None:
+        first_row = intel_batch_rows[0]
+        last_row = intel_batch_rows[-1]
+        lines.insert(
+            1,
+            (
+                f"- Intel V2 batch-window sweep moved latency p95 from {first_row['latency_p95_ms']} ms at {first_row['batch_window_ms']} ms "
+                f"to {last_row['latency_p95_ms']} ms at {last_row['batch_window_ms']} ms, while max frame rate dropped from "
+                f"{first_row['max_frame_rate_per_s']} to {last_row['max_frame_rate_per_s']}. "
+                f"Across the same sweep, {_describe_batch_window_payload_shift(intel_batch_rows)}."
+            ),
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -283,6 +386,7 @@ def _write_final_report(
     demo_dir: Path,
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
+    intel_batch_rows: list[dict[str, object]] | None = None,
 ) -> None:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -314,6 +418,14 @@ The primary evidence run is `{intel_sweep_dir.name}`. It uses a bounded slice of
 The clean qos0 run shows the expected tradeoff. V0 preserves the most immediate delivery path with a p95 display latency of {clean_v0['latency_p95_ms']} ms, whereas V4 increases p95 latency to {clean_v4['latency_p95_ms']} ms in exchange for frame consolidation. This is visible in the latency CDF and the message-rate plots in [report/assets/figures/intel_clean_qos0_latency_cdf.png](assets/figures/intel_clean_qos0_latency_cdf.png) and [report/assets/figures/intel_outage_qos1_message_rate_over_time.png](assets/figures/intel_outage_qos1_message_rate_over_time.png).
 
 The explicit Intel qos0 bandwidth comparison answers the first paper question directly. Compared with V0, V2 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}. V4 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. Peak per-second downstream payload rate also moved upward rather than downward: V2 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='max_bandwidth_delta_pct')}, while V4 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='max_bandwidth_delta_pct')}. In this evidence set, the smart paths reduce render cadence and frame count rather than downstream payload-byte volume. The paper-ready table for this claim is [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md).
+"""
+    if intel_batch_rows is not None:
+        first_row = intel_batch_rows[0]
+        last_row = intel_batch_rows[-1]
+        report_text += f"""
+The Intel V2 batch-window sweep answers the second paper question directly. As the fixed batch window increased from {first_row['batch_window_ms']} ms to {last_row['batch_window_ms']} ms, latency p95 rose from {first_row['latency_p95_ms']} ms to {last_row['latency_p95_ms']} ms while max frame rate fell from {first_row['max_frame_rate_per_s']} to {last_row['max_frame_rate_per_s']}. Across the same sweep, {_describe_batch_window_payload_shift(intel_batch_rows)}. That means the current V2 tradeoff is primarily latency versus render cadence, with payload-byte movement reported as supporting context rather than the headline result. The paper-ready outputs for this task are [report/assets/tables/intel_v2_batch_window_tradeoff.md](assets/tables/intel_v2_batch_window_tradeoff.md) and [report/assets/figures/intel_v2_batch_window_tradeoff.png](assets/figures/intel_v2_batch_window_tradeoff.png).
+"""
+    report_text += f"""
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
 
@@ -344,7 +456,13 @@ def _write_deliverable_gate(
     aot_sweep_dir: Path,
     demo_dir: Path,
     output_dir: Path,
+    intel_batch_sweep_dir: Path | None = None,
 ) -> None:
+    batch_sweep_line = ""
+    batch_summary_tables = ""
+    if intel_batch_sweep_dir is not None:
+        batch_sweep_line = f"- Intel V2 batch-window sweep run id: `{intel_batch_sweep_dir.name}` at `{intel_batch_sweep_dir}`\n"
+        batch_summary_tables = ", [report/assets/tables/intel_v2_batch_window_tradeoff.csv](assets/tables/intel_v2_batch_window_tradeoff.csv), [report/assets/tables/intel_v2_batch_window_tradeoff.md](assets/tables/intel_v2_batch_window_tradeoff.md), [report/assets/figures/intel_v2_batch_window_tradeoff.png](assets/figures/intel_v2_batch_window_tradeoff.png)"
     content = f"""# Deliverable Completion Gate
 
 ## M1-M3 System Path
@@ -358,8 +476,8 @@ def _write_deliverable_gate(
 - Intel primary sweep run id: `{intel_sweep_dir.name}` at `{intel_sweep_dir}`
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
-- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+{batch_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -386,10 +504,22 @@ def _write_deliverable_gate(
     (REPORT_DIR / "deliverable_gate.md").write_text(content, encoding="utf-8")
 
 
-def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir: Path, output_dir: Path) -> dict[str, object]:
+def build_report_assets(
+    *,
+    intel_sweep_dir: Path,
+    aot_sweep_dir: Path,
+    demo_dir: Path,
+    output_dir: Path,
+    intel_batch_sweep_dir: Path | None = None,
+) -> dict[str, object]:
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    intel_batch_rows = (
+        _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
+        if intel_batch_sweep_dir is not None
+        else None
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     figures_dir = output_dir / "figures"
@@ -432,7 +562,27 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
             "latency_p95_ms",
         ],
     )
-    (tables_dir / "intel_key_claims.md").write_text(_build_key_claims(intel_rows, aot_rows, demo_dir), encoding="utf-8")
+    if intel_batch_rows is not None:
+        _write_csv(tables_dir / "intel_v2_batch_window_tradeoff.csv", intel_batch_rows)
+        _write_markdown_table(
+            tables_dir / "intel_v2_batch_window_tradeoff.md",
+            intel_batch_rows,
+            columns=[
+                "batch_window_ms",
+                "latency_p95_ms",
+                "latency_mean_ms",
+                "max_frame_rate_per_s",
+                "proxy_downstream_frames_out",
+                "proxy_downstream_bytes_out",
+                "max_bandwidth_bytes_per_s",
+                "stale_fraction",
+                "run_dir",
+            ],
+        )
+    (tables_dir / "intel_key_claims.md").write_text(
+        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows),
+        encoding="utf-8",
+    )
 
     _plot_latency_cdf(
         intel_rows,
@@ -458,12 +608,18 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
         ylabel="Rendered updates per second",
         output_path=figures_dir / "intel_outage_qos1_message_rate_over_time.png",
     )
+    if intel_batch_rows is not None:
+        _plot_batch_window_tradeoff(
+            intel_batch_rows,
+            output_path=figures_dir / "intel_v2_batch_window_tradeoff.png",
+        )
     _copy_demo_artifacts(demo_dir, figures_dir)
 
     manifest = {
         "intel_sweep_dir": str(intel_sweep_dir),
         "aot_sweep_dir": str(aot_sweep_dir),
         "demo_dir": str(demo_dir),
+        "intel_batch_sweep_dir": str(intel_batch_sweep_dir) if intel_batch_sweep_dir is not None else None,
         "intel_runs": [row["run_id"] for row in intel_rows],
         "aot_runs": [row["run_id"] for row in aot_rows],
         "generated_figures": [
@@ -482,6 +638,14 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
             str(tables_dir / "intel_key_claims.md"),
         ],
     }
+    if intel_batch_rows is not None:
+        manifest["generated_figures"].append(str(figures_dir / "intel_v2_batch_window_tradeoff.png"))
+        manifest["generated_tables"].extend(
+            [
+                str(tables_dir / "intel_v2_batch_window_tradeoff.csv"),
+                str(tables_dir / "intel_v2_batch_window_tradeoff.md"),
+            ]
+        )
     (output_dir / "evidence_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -491,12 +655,14 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
         demo_dir=demo_dir,
         intel_rows=intel_rows,
         aot_rows=aot_rows,
+        intel_batch_rows=intel_batch_rows,
     )
     _write_deliverable_gate(
         intel_sweep_dir=intel_sweep_dir,
         aot_sweep_dir=aot_sweep_dir,
         demo_dir=demo_dir,
         output_dir=output_dir,
+        intel_batch_sweep_dir=intel_batch_sweep_dir,
     )
     return manifest
 
@@ -506,6 +672,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--intel-sweep-dir", type=Path, required=True)
     parser.add_argument("--aot-sweep-dir", type=Path, required=True)
     parser.add_argument("--demo-dir", type=Path, required=True)
+    parser.add_argument("--intel-batch-sweep-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
@@ -517,6 +684,7 @@ def main() -> None:
         aot_sweep_dir=args.aot_sweep_dir,
         demo_dir=args.demo_dir,
         output_dir=args.output_dir,
+        intel_batch_sweep_dir=args.intel_batch_sweep_dir,
     )
     print(json.dumps(manifest, indent=2))
 

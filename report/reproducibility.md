@@ -59,6 +59,18 @@ python ./experiments/run_final_deliverables.py \
 4. Runs the captured M5 demo against the Intel replay CSV.
 5. Regenerates tracked report assets under `report/assets/`, `report/final_report.md`, and `report/deliverable_gate.md`.
 
+## M6 Batch-Window Sweep
+
+If the normalized Intel replay CSV already exists locally, run the dedicated V2 batch-window sweep:
+
+```powershell
+python .\experiments\run_batch_window_sweep.py `
+  --sweep-id intel-v2-batch-window-20260403 `
+  --data-file .\experiments\logs\generated_inputs\intel_lab_final_20260403.csv
+```
+
+This produces local-only logs under `experiments/logs/intel-v2-batch-window-20260403/` for the canonical `50,100,250,500,1000 ms` windows.
+
 ## Local-Only Outputs
 
 - `experiments/logs/final-deliverables-<STAMP>/manifest.json`
@@ -69,6 +81,7 @@ python ./experiments/run_final_deliverables.py \
 - `experiments/logs/final-intel-primary-<STAMP>/`
 - `experiments/logs/final-aot-validation-<STAMP>/`
 - `experiments/logs/final-demo-<STAMP>/demo/`
+- `experiments/logs/intel-v2-batch-window-<STAMP>/`
 
 These remain ignored and should not be committed.
 
@@ -90,6 +103,7 @@ python .\experiments\build_report_assets.py `
   --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 `
   --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 `
   --demo-dir .\experiments\logs\final-demo-20260403\demo `
+  --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 `
   --output-dir .\report\assets
 ```
 

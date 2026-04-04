@@ -57,6 +57,7 @@ class SweepConfig:
     mqtt_host: str
     mqtt_port: int
     run_browser: bool
+    batch_window_ms: int | None = None
 
 
 def _find_python() -> str:
@@ -122,9 +123,18 @@ def ensure_browser_capture_prerequisites() -> None:
         raise SystemExit(detail)
 
 
-def run_once(config: SweepConfig, *, variant: str, mqtt_qos: int, scenario_name: str) -> Path:
+def run_once(
+    config: SweepConfig,
+    *,
+    variant: str,
+    mqtt_qos: int,
+    scenario_name: str,
+    run_label_suffix: str | None = None,
+) -> Path:
     python_exe = _find_python()
     run_label = f"{variant}-qos{mqtt_qos}-{scenario_name}"
+    if run_label_suffix:
+        run_label = f"{run_label}-{run_label_suffix}"
     gateway_run_id = f"{config.sweep_id}-{run_label}"
     run_dir = LOGS_ROOT / config.sweep_id / run_label
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +148,8 @@ def run_once(config: SweepConfig, *, variant: str, mqtt_qos: int, scenario_name:
         "WS_PORT": str(config.gateway_port),
         "GATEWAY_MODE": variant,
     }
+    if config.batch_window_ms is not None:
+        gateway_env["BATCH_WINDOW_MS"] = str(config.batch_window_ms)
     proxy_env = os.environ.copy() | {
         "RUN_ID": gateway_run_id,
         "IMPAIR_HOST": config.proxy_host,
@@ -232,6 +244,7 @@ def run_once(config: SweepConfig, *, variant: str, mqtt_qos: int, scenario_name:
             "variant": variant,
             "scenario": scenario_name,
             "mqtt_qos": mqtt_qos,
+            "batch_window_ms": config.batch_window_ms,
             "duration_s": config.duration_s,
             "replay_speed": config.replay_speed,
             "sensor_limit": config.sensor_limit,
@@ -314,6 +327,7 @@ def parse_args() -> SweepConfig:
         mqtt_host=args.mqtt_host,
         mqtt_port=args.mqtt_port,
         run_browser=not args.skip_browser,
+        batch_window_ms=None,
     )
 
 

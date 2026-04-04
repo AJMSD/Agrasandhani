@@ -2,6 +2,7 @@
   "intel_sweep_dir": "experiments\\logs\\final-intel-primary-20260403",
   "aot_sweep_dir": "experiments\\logs\\final-aot-validation-20260403",
   "demo_dir": "experiments\\logs\\final-demo-20260403\\demo",
+  "intel_batch_sweep_dir": "experiments\\logs\\intel-v2-batch-window-20260403",
   "intel_runs": [
     "v0-qos0-bandwidth_200kbps",
     "v0-qos0-clean",
@@ -46,13 +47,16 @@
     "report\\assets\\figures\\intel_outage_qos1_message_rate_over_time.png",
     "report\\assets\\figures\\final_demo_compare.png",
     "report\\assets\\figures\\final_demo_baseline_dashboard.png",
-    "report\\assets\\figures\\final_demo_smart_dashboard.png"
+    "report\\assets\\figures\\final_demo_smart_dashboard.png",
+    "report\\assets\\figures\\intel_v2_batch_window_tradeoff.png"
   ],
   "generated_tables": [
     "report\\assets\\tables\\intel_primary_run_summary.csv",
     "report\\assets\\tables\\intel_bandwidth_vs_v0.csv",
     "report\\assets\\tables\\intel_bandwidth_vs_v0.md",
     "report\\assets\\tables\\aot_validation_summary.csv",
-    "report\\assets\\tables\\intel_key_claims.md"
+    "report\\assets\\tables\\intel_key_claims.md",
+    "report\\assets\\tables\\intel_v2_batch_window_tradeoff.csv",
+    "report\\assets\\tables\\intel_v2_batch_window_tradeoff.md"
   ]
 }
