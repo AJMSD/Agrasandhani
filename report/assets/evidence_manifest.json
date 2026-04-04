@@ -62,6 +62,8 @@
     "report\\assets\\tables\\intel_bandwidth_vs_v0.md",
     "report\\assets\\tables\\intel_qos_comparison.csv",
     "report\\assets\\tables\\intel_qos_comparison.md",
+    "report\\assets\\tables\\intel_condensed_summary.csv",
+    "report\\assets\\tables\\intel_condensed_summary.md",
     "report\\assets\\tables\\intel_outage_qos0_v0_vs_v4_freshness.csv",
     "report\\assets\\tables\\intel_outage_qos0_v0_vs_v4_freshness.md",
     "report\\assets\\tables\\aot_validation_summary.csv",

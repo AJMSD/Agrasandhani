@@ -294,6 +294,30 @@ def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> li
     return rows
 
 
+def _build_intel_condensed_summary_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scenario in INTEL_BANDWIDTH_SCENARIOS:
+        for variant in ("v0", "v2", "v4"):
+            try:
+                source = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=0)
+            except KeyError:
+                continue
+            rows.append(
+                {
+                    "variant": variant,
+                    "scenario": scenario,
+                    "mqtt_qos": 0,
+                    "latency_p95_ms": float(source["latency_p95_ms"]),
+                    "proxy_downstream_frames_out": int(source["proxy_downstream_frames_out"]),
+                    "proxy_downstream_bytes_out": int(source["proxy_downstream_bytes_out"]),
+                    "stale_fraction": float(source.get("stale_fraction", 0.0)),
+                }
+            )
+    if not rows:
+        raise ValueError("No Intel rows were found for condensed summary outputs")
+    return rows
+
+
 def _build_intel_qos_comparison_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for scenario in INTEL_BANDWIDTH_SCENARIOS:
@@ -1177,6 +1201,8 @@ The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper questi
 The Intel qos0 outage freshness trace answers the fifth paper question directly. For this task, the paper-ready freshness signal is age-of-information over time rather than stale-fraction over time, because the current dashboard export records age only on rendered updates and does not sample idle stale transitions between renders. {_describe_outage_freshness(intel_outage_freshness_rows)} The end-state `staleCount` and `latestRowCount` values remain useful supporting context, but the primary evidence is the age trace in [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png) together with the compact summary table [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md).
 
 The Intel qos0 versus qos1 comparison answers the next paper-readiness question directly with a side-by-side table and figure. Across the Intel matrix (`v0`, `v2`, `v4` by `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s`), the measured exact duplicate-drop counter for qos1 stayed at {qos1_duplicates}. QoS1 versus QoS0 downstream bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')} for V0, {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')} for V2, and {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')} for V4. Latency p95 deltas are captured in the same table so the paper can make a bounded statement about observed setup-specific behavior rather than asserting broader reliability guarantees. The paper-ready outputs for this task are [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md) and [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png).
+
+The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency p95, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
 """
     report_text += f"""
 
@@ -1214,6 +1240,7 @@ def _write_deliverable_gate(
     intel_adaptive_sweep_dir: Path | None = None,
 ) -> None:
     freshness_summary_tables = ", [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv), [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md), [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png)"
+    condensed_summary_tables = ", [report/assets/tables/intel_condensed_summary.csv](assets/tables/intel_condensed_summary.csv), [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md)"
     batch_sweep_line = ""
     batch_summary_tables = ""
     if intel_batch_sweep_dir is not None:
@@ -1243,7 +1270,7 @@ def _write_deliverable_gate(
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
 {batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}{condensed_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -1284,6 +1311,7 @@ def build_report_assets(
     aot_rows = _load_summary_rows(aot_sweep_dir)
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     intel_qos_rows = _build_intel_qos_comparison_rows(intel_rows)
+    intel_condensed_rows = _build_intel_condensed_summary_rows(intel_rows)
     intel_outage_freshness_rows = _build_intel_outage_freshness_rows(intel_rows)
     intel_batch_rows = (
         _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
@@ -1311,6 +1339,7 @@ def build_report_assets(
     _write_csv(tables_dir / "aot_validation_summary.csv", aot_rows)
     _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
     _write_csv(tables_dir / "intel_qos_comparison.csv", intel_qos_rows)
+    _write_csv(tables_dir / "intel_condensed_summary.csv", intel_condensed_rows)
     _write_csv(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv", intel_outage_freshness_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
@@ -1387,6 +1416,19 @@ def build_report_assets(
             "stale_fraction_delta",
             "qos0_run_dir",
             "qos1_run_dir",
+        ],
+    )
+    _write_markdown_table(
+        tables_dir / "intel_condensed_summary.md",
+        intel_condensed_rows,
+        columns=[
+            "variant",
+            "scenario",
+            "mqtt_qos",
+            "latency_p95_ms",
+            "proxy_downstream_frames_out",
+            "proxy_downstream_bytes_out",
+            "stale_fraction",
         ],
     )
     if intel_batch_rows is not None:
@@ -1554,6 +1596,8 @@ def build_report_assets(
             str(tables_dir / "intel_bandwidth_vs_v0.md"),
             str(tables_dir / "intel_qos_comparison.csv"),
             str(tables_dir / "intel_qos_comparison.md"),
+            str(tables_dir / "intel_condensed_summary.csv"),
+            str(tables_dir / "intel_condensed_summary.md"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
             str(tables_dir / "aot_validation_summary.csv"),

@@ -350,3 +350,63 @@ Latency p95 shifts were mixed in sign and magnitude by scenario/variant (for exa
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the QoS builder/test changes, regenerated tracked report assets, refreshed generated report documents, and this appended `report.md`.
+
+## MP6 Task 7 Session Report
+
+### Task Goal
+
+Complete the next M6 checklist item by adding one condensed Intel summary table that paper readers can scan quickly, then regenerate tracked assets and document the measured interpretation.
+
+### What Was Changed
+
+- Extended `experiments/build_report_assets.py` with `_build_intel_condensed_summary_rows(...)`.
+- Added condensed summary outputs:
+  - `report/assets/tables/intel_condensed_summary.csv`
+  - `report/assets/tables/intel_condensed_summary.md`
+- Integrated condensed outputs into generated documents and manifest:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+- Updated `tests/test_build_report_assets.py` to lock the condensed-table output contract and references.
+- Updated `PROJECT_CHECKLIST.md` locally only so the condensed-summary task is now marked done.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_build_report_assets.py
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+```
+
+### Verification Results
+
+- `python -m pytest tests/test_build_report_assets.py` passed (`5 passed`).
+- The regeneration command completed successfully and the manifest now includes:
+  - `report/assets/tables/intel_condensed_summary.csv`
+  - `report/assets/tables/intel_condensed_summary.md`
+
+### Measured Condensed Intel Summary (QoS0)
+
+| Scenario | Variant | Latency p95 | Downstream frames | Downstream bytes | Stale fraction |
+| --- | --- | --- | --- | --- | --- |
+| `clean` | `v0` | `131.8 ms` | `132` | `12069` | `0.0` |
+| `clean` | `v2` | `269.0 ms` | `5` | `13051` | `0.0` |
+| `clean` | `v4` | `682.0 ms` | `6` | `17641` | `0.0` |
+| `bandwidth_200kbps` | `v0` | `119.35 ms` | `132` | `12069` | `0.0` |
+| `bandwidth_200kbps` | `v2` | `263.9 ms` | `5` | `13051` | `0.0` |
+| `bandwidth_200kbps` | `v4` | `604.0 ms` | `6` | `17641` | `0.0` |
+| `loss_2pct` | `v0` | `120.55 ms` | `130` | `11883` | `0.0` |
+| `loss_2pct` | `v2` | `269.0 ms` | `5` | `13051` | `0.0` |
+| `loss_2pct` | `v4` | `586.0 ms` | `6` | `17641` | `0.0` |
+| `outage_5s` | `v0` | `112.25 ms` | `116` | `10605` | `0.0` |
+| `outage_5s` | `v2` | `277.0 ms` | `4` | `11401` | `0.0` |
+| `outage_5s` | `v4` | `579.0 ms` | `6` | `17641` | `0.0` |
+
+### Analysis
+
+This task adds the exact compact scan artifact requested by the checklist. It makes the core tradeoff visible in one place: smart variants (`v2`, `v4`) drastically reduce downstream frame count compared with `v0`, but they do not reduce downstream payload bytes and they increase p95 latency, especially for `v4`. The stale fraction remained `0.0` in this condensed qos0 matrix.
+
+That means the paper can now point readers to one table for a quick evidence overview before the deeper per-task tables and figures. This closes the condensed-summary evidence gap without changing gateway behavior.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder/test changes, regenerated tracked report artifacts, refreshed generated report docs, and this appended `report.md`.

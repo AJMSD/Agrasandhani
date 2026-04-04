@@ -73,6 +73,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.md").exists())
             self.assertTrue((output_dir / "tables" / "intel_qos_comparison.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_qos_comparison.md").exists())
+            self.assertTrue((output_dir / "tables" / "intel_condensed_summary.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_condensed_summary.md").exists())
             self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").exists())
             self.assertTrue((output_dir / "tables" / "aot_validation_summary.csv").exists())
@@ -95,6 +97,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("| clean | v0 |", qos_table)
             self.assertIn("| qos0_latency_p95_ms |", qos_table)
             self.assertIn("gateway_mqtt_in_msgs_delta_pct", qos_table)
+            condensed_table = (output_dir / "tables" / "intel_condensed_summary.md").read_text(encoding="utf-8")
+            self.assertIn("| variant | scenario | mqtt_qos |", condensed_table)
+            self.assertIn("| v0 | clean | 0 |", condensed_table)
+            self.assertIn("| v2 | bandwidth_200kbps | 0 |", condensed_table)
+            self.assertIn("stale_fraction", condensed_table)
             freshness_table = (output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").read_text(encoding="utf-8")
             self.assertIn("| v0 |", freshness_table)
             self.assertIn("| v4 |", freshness_table)
@@ -107,9 +114,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
             self.assertIn("intel_bandwidth_vs_v0.csv", deliverable_gate)
             self.assertIn("intel_qos_comparison.csv", deliverable_gate)
+            self.assertIn("intel_condensed_summary.csv", deliverable_gate)
             self.assertIn("intel_outage_qos0_v0_vs_v4_freshness.csv", deliverable_gate)
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
+            self.assertIn(str(output_dir / "tables" / "intel_condensed_summary.csv"), manifest["generated_tables"])
 
     def test_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:

@@ -1,0 +1,13 @@
+variant,scenario,mqtt_qos,latency_p95_ms,proxy_downstream_frames_out,proxy_downstream_bytes_out,stale_fraction
+v0,clean,0,131.8,132,12069,0.0
+v2,clean,0,269.0,5,13051,0.0
+v4,clean,0,682.0,6,17641,0.0
+v0,bandwidth_200kbps,0,119.35,132,12069,0.0
+v2,bandwidth_200kbps,0,263.9,5,13051,0.0
+v4,bandwidth_200kbps,0,604.0,6,17641,0.0
+v0,loss_2pct,0,120.55,130,11883,0.0
+v2,loss_2pct,0,269.0,5,13051,0.0
+v4,loss_2pct,0,586.0,6,17641,0.0
+v0,outage_5s,0,112.25,116,10605,0.0
+v2,outage_5s,0,277.0,4,11401,0.0
+v4,outage_5s,0,579.0,6,17641,0.0
