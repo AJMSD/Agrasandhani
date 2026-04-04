@@ -282,3 +282,71 @@ What `v4` did provide was a larger retained last-known-good state at the end of 
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder update, regenerated tracked report assets, the reproducibility update, the refreshed report text, the test update, and this appended `report.md`.
+
+## MP6 Task 6 Session Report
+
+### Task Goal
+
+Complete the next M6 checklist item by adding an explicit Intel QoS `0` versus QoS `1` comparison artifact path that reports duplicate rate, ingress overhead, downstream bandwidth/frame impact, and latency deltas, then regenerate tracked report outputs and capture a bounded interpretation for the paper.
+
+### What Was Changed
+
+- Extended `experiments/build_report_assets.py` with a new paired QoS comparison pipeline:
+  - `_build_intel_qos_comparison_rows(...)`
+  - `_plot_qos_comparison(...)`
+  - `_format_qos_comparison_series(...)`
+- Added generated QoS comparison outputs:
+  - `report/assets/tables/intel_qos_comparison.csv`
+  - `report/assets/tables/intel_qos_comparison.md`
+  - `report/assets/figures/intel_qos_comparison.png`
+- Integrated the new QoS artifacts into generated documents:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+  - `report/assets/tables/intel_key_claims.md`
+- Updated `tests/test_build_report_assets.py` to lock the new QoS output contract.
+- Updated `PROJECT_CHECKLIST.md` locally only to mark:
+  - M6 QoS comparison task as done
+  - M6 required figures task as done (explicit QoS plot now present)
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_build_report_assets.py
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+```
+
+### Verification Results
+
+- `python -m pytest tests/test_build_report_assets.py` passed (`5 passed`).
+- Report assets regenerated cleanly from existing final logs.
+- The manifest now includes the QoS comparison table and figure.
+
+### Measured Intel QoS Comparison Result
+
+| Scenario | Variant | Latency p95 delta (`qos1 - qos0`) | Downstream bytes delta | Downstream frames delta | Ingress msgs delta | QoS1 duplicates dropped |
+| --- | --- | --- | --- | --- | --- | --- |
+| `clean` | `v0` | `-8.8 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `clean` | `v2` | `+3.45 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `clean` | `v4` | `-215.0 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `bandwidth_200kbps` | `v0` | `+22.35 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `bandwidth_200kbps` | `v2` | `+15.1 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `bandwidth_200kbps` | `v4` | `-165.0 ms` | `+1.0%` | `+16.7%` | `0.0%` | `0` |
+| `loss_2pct` | `v0` | `+2.1 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `loss_2pct` | `v2` | `-5.55 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `loss_2pct` | `v4` | `-27.0 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `outage_5s` | `v0` | `+4.0 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `outage_5s` | `v2` | `-3.75 ms` | `0.0%` | `0.0%` | `0.0%` | `0` |
+| `outage_5s` | `v4` | `-125.95 ms` | `-11.5%` | `-16.7%` | `0.0%` | `0` |
+
+### Analysis
+
+This task closes the QoS evidence gap with a bounded, setup-specific answer. The observed exact duplicate-drop count stayed at `0` across the Intel qos1 comparison matrix, so the report can validly state that no exact duplicates were observed in this environment, without claiming that qos1 duplicates never happen in general.
+
+The measured ingress message overhead was also `0.0%` for all paired runs, and most downstream payload/frame deltas were `0.0%`, with only small scenario-specific movement in `v4` (`+1.0%` bytes and `+16.7%` frames under `bandwidth_200kbps`, `-11.5%` bytes and `-16.7%` frames under `outage_5s`). This indicates that in the current local setup, qos level did not materially change downstream volume behavior.
+
+Latency p95 shifts were mixed in sign and magnitude by scenario/variant (for example `+22.35 ms` for `v0` under `bandwidth_200kbps`, `-125.95 ms` for `v4` under `outage_5s`), so the correct paper framing is comparative and empirical rather than causal. The new table and figure now make that bounded interpretation explicit.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the QoS builder/test changes, regenerated tracked report assets, refreshed generated report documents, and this appended `report.md`.

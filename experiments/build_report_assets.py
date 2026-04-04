@@ -294,6 +294,57 @@ def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> li
     return rows
 
 
+def _build_intel_qos_comparison_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scenario in INTEL_BANDWIDTH_SCENARIOS:
+        for variant in ("v0", "v2", "v4"):
+            try:
+                qos0_row = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=0)
+                qos1_row = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=1)
+            except KeyError:
+                continue
+            rows.append(
+                {
+                    "scenario": scenario,
+                    "variant": variant,
+                    "qos0_latency_p95_ms": float(qos0_row["latency_p95_ms"]),
+                    "qos1_latency_p95_ms": float(qos1_row["latency_p95_ms"]),
+                    "latency_p95_delta_ms": round(float(qos1_row["latency_p95_ms"]) - float(qos0_row["latency_p95_ms"]), 3),
+                    "qos0_duplicates_dropped": int(qos0_row.get("duplicates_dropped", 0)),
+                    "qos1_duplicates_dropped": int(qos1_row.get("duplicates_dropped", 0)),
+                    "qos0_gateway_mqtt_in_msgs": int(qos0_row.get("gateway_mqtt_in_msgs", 0)),
+                    "qos1_gateway_mqtt_in_msgs": int(qos1_row.get("gateway_mqtt_in_msgs", 0)),
+                    "gateway_mqtt_in_msgs_delta_pct": _format_delta(
+                        float(qos0_row.get("gateway_mqtt_in_msgs", 0)),
+                        float(qos1_row.get("gateway_mqtt_in_msgs", 0)),
+                    ),
+                    "qos0_proxy_downstream_bytes_out": int(qos0_row["proxy_downstream_bytes_out"]),
+                    "qos1_proxy_downstream_bytes_out": int(qos1_row["proxy_downstream_bytes_out"]),
+                    "downstream_bytes_delta_pct": _format_delta(
+                        float(qos0_row["proxy_downstream_bytes_out"]),
+                        float(qos1_row["proxy_downstream_bytes_out"]),
+                    ),
+                    "qos0_proxy_downstream_frames_out": int(qos0_row["proxy_downstream_frames_out"]),
+                    "qos1_proxy_downstream_frames_out": int(qos1_row["proxy_downstream_frames_out"]),
+                    "downstream_frames_delta_pct": _format_delta(
+                        float(qos0_row["proxy_downstream_frames_out"]),
+                        float(qos1_row["proxy_downstream_frames_out"]),
+                    ),
+                    "qos0_stale_fraction": float(qos0_row.get("stale_fraction", 0.0)),
+                    "qos1_stale_fraction": float(qos1_row.get("stale_fraction", 0.0)),
+                    "stale_fraction_delta": round(
+                        float(qos1_row.get("stale_fraction", 0.0)) - float(qos0_row.get("stale_fraction", 0.0)),
+                        6,
+                    ),
+                    "qos0_run_dir": str(qos0_row["run_dir"]),
+                    "qos1_run_dir": str(qos1_row["run_dir"]),
+                }
+            )
+    if not rows:
+        raise ValueError("No paired qos0/qos1 Intel rows were found for QoS comparison outputs")
+    return rows
+
+
 def _format_bandwidth_comparison_series(
     comparison_rows: list[dict[str, object]],
     *,
@@ -308,6 +359,25 @@ def _format_bandwidth_comparison_series(
             if candidate["variant"] == variant and candidate["scenario"] == scenario
         )
         parts.append(f"{row[delta_field]} under {scenario}")
+    return ", ".join(parts)
+
+
+def _format_qos_comparison_series(
+    comparison_rows: list[dict[str, object]],
+    *,
+    variant: str,
+    delta_field: str,
+) -> str:
+    variant_rows = [row for row in comparison_rows if row["variant"] == variant]
+    variant_rows = sorted(
+        variant_rows,
+        key=lambda candidate: INTEL_BANDWIDTH_SCENARIOS.index(str(candidate["scenario"])),
+    )
+    if not variant_rows:
+        return "n/a"
+    parts: list[str] = []
+    for row in variant_rows:
+        parts.append(f"{row[delta_field]} under {row['scenario']}")
     return ", ".join(parts)
 
 
@@ -780,6 +850,63 @@ def _plot_v1_v2_isolation(rows: list[dict[str, object]], *, output_path: Path) -
     plt.close(figure)
 
 
+def _plot_qos_comparison(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    figure, axes = plt.subplots(2, 2, figsize=(12, 9), sharex=True)
+    scenario_positions = list(range(len(INTEL_BANDWIDTH_SCENARIOS)))
+    variant_styles = {
+        "v0": ("tab:blue", "o"),
+        "v2": ("tab:orange", "s"),
+        "v4": ("tab:green", "^"),
+    }
+
+    for variant in ("v0", "v2", "v4"):
+        variant_rows = [row for row in rows if row["variant"] == variant]
+        variant_rows = sorted(
+            variant_rows,
+            key=lambda candidate: INTEL_BANDWIDTH_SCENARIOS.index(str(candidate["scenario"])),
+        )
+        if not variant_rows:
+            continue
+        color, marker = variant_styles[variant]
+        x_values = [INTEL_BANDWIDTH_SCENARIOS.index(str(row["scenario"])) for row in variant_rows]
+        qos0_latency = [float(row["qos0_latency_p95_ms"]) for row in variant_rows]
+        qos1_latency = [float(row["qos1_latency_p95_ms"]) for row in variant_rows]
+        qos0_bytes = [float(row["qos0_proxy_downstream_bytes_out"]) for row in variant_rows]
+        qos1_bytes = [float(row["qos1_proxy_downstream_bytes_out"]) for row in variant_rows]
+        qos0_duplicates = [float(row["qos0_duplicates_dropped"]) for row in variant_rows]
+        qos1_duplicates = [float(row["qos1_duplicates_dropped"]) for row in variant_rows]
+        qos0_stale = [float(row["qos0_stale_fraction"]) for row in variant_rows]
+        qos1_stale = [float(row["qos1_stale_fraction"]) for row in variant_rows]
+
+        axes[0, 0].plot(x_values, qos0_latency, marker=marker, linestyle="--", color=color, label=f"{variant.upper()} qos0")
+        axes[0, 0].plot(x_values, qos1_latency, marker=marker, linestyle="-", color=color, label=f"{variant.upper()} qos1", alpha=0.8)
+        axes[0, 1].plot(x_values, qos0_bytes, marker=marker, linestyle="--", color=color, label=f"{variant.upper()} qos0")
+        axes[0, 1].plot(x_values, qos1_bytes, marker=marker, linestyle="-", color=color, label=f"{variant.upper()} qos1", alpha=0.8)
+        axes[1, 0].plot(x_values, qos0_duplicates, marker=marker, linestyle="--", color=color, label=f"{variant.upper()} qos0")
+        axes[1, 0].plot(x_values, qos1_duplicates, marker=marker, linestyle="-", color=color, label=f"{variant.upper()} qos1", alpha=0.8)
+        axes[1, 1].plot(x_values, qos0_stale, marker=marker, linestyle="--", color=color, label=f"{variant.upper()} qos0")
+        axes[1, 1].plot(x_values, qos1_stale, marker=marker, linestyle="-", color=color, label=f"{variant.upper()} qos1", alpha=0.8)
+
+    axes[0, 0].set_title("Latency p95 by QoS")
+    axes[0, 0].set_ylabel("Latency p95 (ms)")
+    axes[0, 1].set_title("Downstream bytes by QoS")
+    axes[0, 1].set_ylabel("Bytes out")
+    axes[1, 0].set_title("Exact duplicates dropped by QoS")
+    axes[1, 0].set_ylabel("Duplicate drops")
+    axes[1, 1].set_title("Stale fraction by QoS")
+    axes[1, 1].set_ylabel("Stale fraction")
+
+    for axis in axes.flatten():
+        axis.set_xticks(scenario_positions)
+        axis.set_xticklabels(INTEL_BANDWIDTH_SCENARIOS, rotation=25, ha="right")
+        axis.grid(True, axis="y", alpha=0.3)
+    axes[0, 0].legend(loc="best", fontsize=8)
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _plot_adaptive_impairment(rows: list[dict[str, object]], *, output_path: Path) -> None:
     figure, axes = plt.subplots(len(INTEL_ADAPTIVE_SCENARIOS), 1, figsize=(10, 8), sharex=False)
     if len(INTEL_ADAPTIVE_SCENARIOS) == 1:
@@ -883,6 +1010,7 @@ def _build_key_claims(
     aot_rows: list[dict[str, object]],
     demo_dir: Path,
     intel_outage_freshness_rows: list[dict[str, object]],
+    intel_qos_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
@@ -897,8 +1025,13 @@ def _build_key_claims(
     baseline_demo = _load_demo_summary(demo_dir, "baseline")
     smart_demo = _load_demo_summary(demo_dir, "smart")
 
-    qos1_duplicates = sum(int(row.get("duplicates_dropped", 0)) for row in intel_rows if int(row["mqtt_qos"]) == 1)
-    avg_qos1_messages = mean(int(row.get("gateway_mqtt_in_msgs", 0)) for row in intel_rows if int(row["mqtt_qos"]) == 1)
+    qos1_duplicates = sum(int(row["qos1_duplicates_dropped"]) for row in intel_qos_rows)
+    qos_msg_overhead_samples = [
+        _parse_percent_label(row["gateway_mqtt_in_msgs_delta_pct"])
+        for row in intel_qos_rows
+        if row["gateway_mqtt_in_msgs_delta_pct"] != "n/a"
+    ]
+    avg_qos_msg_overhead = mean(qos_msg_overhead_samples) if qos_msg_overhead_samples else 0.0
     aot_clean_v0 = _select_row(aot_rows, variant="v0", scenario="clean", mqtt_qos=0)
     aot_clean_v4 = _select_row(aot_rows, variant="v4", scenario="clean", mqtt_qos=0)
 
@@ -926,8 +1059,14 @@ def _build_key_claims(
             + _describe_outage_freshness(intel_outage_freshness_rows)
         ),
         (
-            f"- Intel qos1 runs saw {qos1_duplicates} duplicate drops across the primary sweep while averaging "
-            f"{avg_qos1_messages:.1f} MQTT ingress messages per run, so the broker-backed setup did not surface strong QoS1 retransmit duplication in this environment."
+            f"- Intel qos0 versus qos1 explicit comparison now reports side-by-side deltas: V0 bytes changed by "
+            f"{_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')}; "
+            f"V2 bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}; "
+            f"V4 bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}."
+        ),
+        (
+            f"- Exact duplicate-drop count across the Intel qos1 comparison matrix was {qos1_duplicates}, "
+            f"with average MQTT-ingress overhead of {avg_qos_msg_overhead:.2f}% versus qos0."
         ),
         (
             f"- The captured demo ended with baseline staleCount={baseline_demo['staleCount']} and smart staleCount={smart_demo['staleCount']}, "
@@ -984,6 +1123,7 @@ def _write_final_report(
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
     intel_outage_freshness_rows: list[dict[str, object]],
+    intel_qos_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
@@ -997,7 +1137,7 @@ def _write_final_report(
     aot_clean_v4 = _select_row(aot_rows, variant="v4", scenario="clean", mqtt_qos=0)
     demo_baseline = _load_demo_summary(demo_dir, "baseline")
     demo_smart = _load_demo_summary(demo_dir, "smart")
-    qos1_duplicates = sum(int(row.get("duplicates_dropped", 0)) for row in intel_rows if int(row["mqtt_qos"]) == 1)
+    qos1_duplicates = sum(int(row["qos1_duplicates_dropped"]) for row in intel_qos_rows)
 
     report_text = f"""# Agrasandhani Final Report
 
@@ -1035,6 +1175,8 @@ The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper questi
 """
     report_text += f"""
 The Intel qos0 outage freshness trace answers the fifth paper question directly. For this task, the paper-ready freshness signal is age-of-information over time rather than stale-fraction over time, because the current dashboard export records age only on rendered updates and does not sample idle stale transitions between renders. {_describe_outage_freshness(intel_outage_freshness_rows)} The end-state `staleCount` and `latestRowCount` values remain useful supporting context, but the primary evidence is the age trace in [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png) together with the compact summary table [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md).
+
+The Intel qos0 versus qos1 comparison answers the next paper-readiness question directly with a side-by-side table and figure. Across the Intel matrix (`v0`, `v2`, `v4` by `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s`), the measured exact duplicate-drop counter for qos1 stayed at {qos1_duplicates}. QoS1 versus QoS0 downstream bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')} for V0, {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')} for V2, and {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')} for V4. Latency p95 deltas are captured in the same table so the paper can make a bounded statement about observed setup-specific behavior rather than asserting broader reliability guarantees. The paper-ready outputs for this task are [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md) and [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png).
 """
     report_text += f"""
 
@@ -1101,7 +1243,7 @@ def _write_deliverable_gate(
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
 {batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -1141,6 +1283,7 @@ def build_report_assets(
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    intel_qos_rows = _build_intel_qos_comparison_rows(intel_rows)
     intel_outage_freshness_rows = _build_intel_outage_freshness_rows(intel_rows)
     intel_batch_rows = (
         _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
@@ -1167,6 +1310,7 @@ def build_report_assets(
     _write_csv(tables_dir / "intel_primary_run_summary.csv", intel_rows)
     _write_csv(tables_dir / "aot_validation_summary.csv", aot_rows)
     _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
+    _write_csv(tables_dir / "intel_qos_comparison.csv", intel_qos_rows)
     _write_csv(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv", intel_outage_freshness_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
@@ -1216,6 +1360,33 @@ def build_report_assets(
             "variant_downstream_frames_out",
             "downstream_frames_delta_pct",
             "latency_p95_ms",
+        ],
+    )
+    _write_markdown_table(
+        tables_dir / "intel_qos_comparison.md",
+        intel_qos_rows,
+        columns=[
+            "scenario",
+            "variant",
+            "qos0_latency_p95_ms",
+            "qos1_latency_p95_ms",
+            "latency_p95_delta_ms",
+            "qos0_duplicates_dropped",
+            "qos1_duplicates_dropped",
+            "qos0_gateway_mqtt_in_msgs",
+            "qos1_gateway_mqtt_in_msgs",
+            "gateway_mqtt_in_msgs_delta_pct",
+            "qos0_proxy_downstream_bytes_out",
+            "qos1_proxy_downstream_bytes_out",
+            "downstream_bytes_delta_pct",
+            "qos0_proxy_downstream_frames_out",
+            "qos1_proxy_downstream_frames_out",
+            "downstream_frames_delta_pct",
+            "qos0_stale_fraction",
+            "qos1_stale_fraction",
+            "stale_fraction_delta",
+            "qos0_run_dir",
+            "qos1_run_dir",
         ],
     )
     if intel_batch_rows is not None:
@@ -1301,6 +1472,7 @@ def build_report_assets(
             aot_rows,
             demo_dir,
             intel_outage_freshness_rows,
+            intel_qos_rows,
             intel_batch_rows,
             intel_v1_v2_rows,
             intel_adaptive_rows,
@@ -1336,6 +1508,10 @@ def build_report_assets(
         intel_rows,
         output_path=figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png",
     )
+    _plot_qos_comparison(
+        intel_qos_rows,
+        output_path=figures_dir / "intel_qos_comparison.png",
+    )
     if intel_batch_rows is not None:
         _plot_batch_window_tradeoff(
             intel_batch_rows,
@@ -1367,6 +1543,7 @@ def build_report_assets(
             str(figures_dir / "intel_outage_qos1_bandwidth_over_time.png"),
             str(figures_dir / "intel_outage_qos1_message_rate_over_time.png"),
             str(figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png"),
+            str(figures_dir / "intel_qos_comparison.png"),
             str(figures_dir / "final_demo_compare.png"),
             str(figures_dir / "final_demo_baseline_dashboard.png"),
             str(figures_dir / "final_demo_smart_dashboard.png"),
@@ -1375,6 +1552,8 @@ def build_report_assets(
             str(tables_dir / "intel_primary_run_summary.csv"),
             str(tables_dir / "intel_bandwidth_vs_v0.csv"),
             str(tables_dir / "intel_bandwidth_vs_v0.md"),
+            str(tables_dir / "intel_qos_comparison.csv"),
+            str(tables_dir / "intel_qos_comparison.md"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
             str(tables_dir / "aot_validation_summary.csv"),
@@ -1415,6 +1594,7 @@ def build_report_assets(
         intel_rows=intel_rows,
         aot_rows=aot_rows,
         intel_outage_freshness_rows=intel_outage_freshness_rows,
+        intel_qos_rows=intel_qos_rows,
         intel_batch_rows=intel_batch_rows,
         intel_v1_v2_rows=intel_v1_v2_rows,
         intel_adaptive_rows=intel_adaptive_rows,
