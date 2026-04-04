@@ -4,6 +4,7 @@
   "demo_dir": "experiments\\logs\\final-demo-20260403\\demo",
   "intel_batch_sweep_dir": "experiments\\logs\\intel-v2-batch-window-20260403",
   "intel_v1_v2_sweep_dir": "experiments\\logs\\intel-v1-v2-isolation-20260403",
+  "intel_adaptive_sweep_dir": "experiments\\logs\\intel-v2-v3-adaptive-20260404",
   "intel_runs": [
     "v0-qos0-bandwidth_200kbps",
     "v0-qos0-clean",
@@ -50,7 +51,8 @@
     "report\\assets\\figures\\final_demo_baseline_dashboard.png",
     "report\\assets\\figures\\final_demo_smart_dashboard.png",
     "report\\assets\\figures\\intel_v2_batch_window_tradeoff.png",
-    "report\\assets\\figures\\intel_v1_vs_v2_isolation.png"
+    "report\\assets\\figures\\intel_v1_vs_v2_isolation.png",
+    "report\\assets\\figures\\intel_v2_vs_v3_adaptive_impairment.png"
   ],
   "generated_tables": [
     "report\\assets\\tables\\intel_primary_run_summary.csv",
@@ -61,6 +63,8 @@
     "report\\assets\\tables\\intel_v2_batch_window_tradeoff.csv",
     "report\\assets\\tables\\intel_v2_batch_window_tradeoff.md",
     "report\\assets\\tables\\intel_v1_vs_v2_isolation.csv",
-    "report\\assets\\tables\\intel_v1_vs_v2_isolation.md"
+    "report\\assets\\tables\\intel_v1_vs_v2_isolation.md",
+    "report\\assets\\tables\\intel_v2_vs_v3_adaptive_impairment.csv",
+    "report\\assets\\tables\\intel_v2_vs_v3_adaptive_impairment.md"
   ]
 }

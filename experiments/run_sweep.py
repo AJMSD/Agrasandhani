@@ -58,6 +58,7 @@ class SweepConfig:
     mqtt_port: int
     run_browser: bool
     batch_window_ms: int | None = None
+    gateway_env_overrides: dict[str, str] | None = None
 
 
 def _find_python() -> str:
@@ -150,6 +151,8 @@ def run_once(
     }
     if config.batch_window_ms is not None:
         gateway_env["BATCH_WINDOW_MS"] = str(config.batch_window_ms)
+    if config.gateway_env_overrides:
+        gateway_env.update(config.gateway_env_overrides)
     proxy_env = os.environ.copy() | {
         "RUN_ID": gateway_run_id,
         "IMPAIR_HOST": config.proxy_host,
@@ -328,6 +331,7 @@ def parse_args() -> SweepConfig:
         mqtt_port=args.mqtt_port,
         run_browser=not args.skip_browser,
         batch_window_ms=None,
+        gateway_env_overrides=None,
     )
 
 

@@ -255,6 +255,129 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("intel_v1_vs_v2_isolation.csv", deliverable_gate)
             self.assertIn("intel-v1-v2-isolation-20260403", deliverable_gate)
 
+    def test_build_report_assets_writes_adaptive_impairment_outputs_when_sweep_is_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            base_dir = Path(tmp_dir_name)
+            intel_sweep = base_dir / "final-intel-primary-20260403"
+            aot_sweep = base_dir / "final-aot-validation-20260403"
+            demo_dir = base_dir / "final-demo-20260403" / "demo"
+            adaptive_sweep = base_dir / "intel-v2-v3-adaptive-20260404"
+            output_dir = base_dir / "report-assets"
+
+            for variant, latency, frames, bytes_out in (("v0", 8, 118, 9800), ("v2", 200, 23, 13800), ("v4", 248, 19, 14900)):
+                self._create_intel_run(intel_sweep, variant, "clean", 0, latency_p95=latency, frames=frames, bytes_out=bytes_out)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 0, latency_p95=latency + 4, frames=frames - 5, bytes_out=bytes_out - 300)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 1, latency_p95=latency + 5, frames=frames - 5, bytes_out=bytes_out - 300)
+            for scenario in ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"):
+                for variant, latency, frames, bytes_out in (("v0", 10, 100, 9000), ("v2", 220, 24, 13000), ("v4", 245, 20, 14000)):
+                    for qos in (0, 1):
+                        self._create_intel_run(
+                            intel_sweep,
+                            variant,
+                            scenario,
+                            qos,
+                            latency_p95=latency,
+                            frames=frames,
+                            bytes_out=bytes_out,
+                        )
+
+            self._create_aot_run(aot_sweep, "v0", "clean", 0, latency_p95=12, frames=80, bytes_out=6200)
+            self._create_aot_run(aot_sweep, "v4", "clean", 0, latency_p95=230, frames=18, bytes_out=7100)
+            self._create_aot_run(aot_sweep, "v0", "outage_5s", 0, latency_p95=15, frames=40, bytes_out=4000)
+            self._create_aot_run(aot_sweep, "v4", "outage_5s", 0, latency_p95=240, frames=10, bytes_out=5000)
+
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v2",
+                scenario="bandwidth_200kbps",
+                latency_p95=260,
+                stale_fraction=0.05,
+                max_update_rate_per_s=30,
+                frames=15,
+                bytes_out=13500,
+                effective_windows=[250, 250, 250],
+                adaptation_reasons=["fixed_window", "fixed_window", "fixed_window"],
+                increase_events=0,
+                decrease_events=0,
+                last_reason="fixed_window",
+                update_rates=[24, 30, 20],
+            )
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v3",
+                scenario="bandwidth_200kbps",
+                latency_p95=240,
+                stale_fraction=0.02,
+                max_update_rate_per_s=26,
+                frames=12,
+                bytes_out=12900,
+                effective_windows=[250, 350, 450],
+                adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=60", "degrade:queue_depth=30"],
+                increase_events=2,
+                decrease_events=0,
+                last_reason="degrade:queue_depth=30",
+                update_rates=[20, 26, 18],
+            )
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v2",
+                scenario="loss_2pct",
+                latency_p95=250,
+                stale_fraction=0.01,
+                max_update_rate_per_s=32,
+                frames=14,
+                bytes_out=13400,
+                effective_windows=[250, 250, 250],
+                adaptation_reasons=["fixed_window", "fixed_window", "fixed_window"],
+                increase_events=0,
+                decrease_events=0,
+                last_reason="fixed_window",
+                update_rates=[28, 32, 21],
+            )
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v3",
+                scenario="loss_2pct",
+                latency_p95=255,
+                stale_fraction=0.015,
+                max_update_rate_per_s=29,
+                frames=13,
+                bytes_out=13200,
+                effective_windows=[250, 300, 250],
+                adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=45", "recover:healthy(queue_depth=0,send_duration_ms=10)"],
+                increase_events=1,
+                decrease_events=1,
+                last_reason="recover:healthy(queue_depth=0,send_duration_ms=10)",
+                update_rates=[24, 29, 20],
+            )
+
+            self._create_demo_artifacts(demo_dir)
+
+            report_dir = base_dir / "report"
+            with patch("experiments.build_report_assets.REPORT_DIR", report_dir):
+                manifest = build_report_assets(
+                    intel_sweep_dir=intel_sweep,
+                    aot_sweep_dir=aot_sweep,
+                    demo_dir=demo_dir,
+                    output_dir=output_dir,
+                    intel_adaptive_sweep_dir=adaptive_sweep,
+                )
+
+            self.assertEqual(manifest["intel_adaptive_sweep_dir"], str(adaptive_sweep))
+            self.assertTrue((output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").exists())
+            self.assertTrue((output_dir / "figures" / "intel_v2_vs_v3_adaptive_impairment.png").exists())
+            adaptive_table = (output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").read_text(encoding="utf-8")
+            self.assertIn("| bandwidth_200kbps | 260.0 | 240.0 | -20.0 | 0.05 | 0.02 | -0.03 | 30 | 26 | -13.3% | 15 | 12 | -20.0% | 13500 | 12900 | -4.4% | 250 | 250 | 250 | 450 | 2 | 0 | degrade:queue_depth=30 |", adaptive_table)
+            key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
+            self.assertIn("Intel V2 versus V3 adaptive sweep shows what adaptive batching changed under impairment", key_claims)
+            final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn("The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper question directly.", final_report)
+            self.assertIn("intel_v2_vs_v3_adaptive_impairment.png", final_report)
+            deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_v2_vs_v3_adaptive_impairment.csv", deliverable_gate)
+            self.assertIn("intel-v2-v3-adaptive-20260404", deliverable_gate)
+
     def _create_intel_run(
         self,
         sweep_dir: Path,
@@ -403,6 +526,57 @@ class BuildReportAssetsTests(unittest.TestCase):
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
+    def _create_adaptive_run(
+        self,
+        sweep_dir: Path,
+        *,
+        variant: str,
+        scenario: str,
+        latency_p95: int,
+        stale_fraction: float,
+        max_update_rate_per_s: int,
+        frames: int,
+        bytes_out: int,
+        effective_windows: list[int],
+        adaptation_reasons: list[str],
+        increase_events: int,
+        decrease_events: int,
+        last_reason: str,
+        update_rates: list[int],
+    ) -> None:
+        run_dir = sweep_dir / f"{variant}-qos0-{scenario}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "run_id": run_dir.name,
+            "variant": variant,
+            "scenario": scenario,
+            "mqtt_qos": 0,
+            "latency_mean_ms": latency_p95 - 25,
+            "latency_p95_ms": latency_p95,
+            "latency_p99_ms": latency_p95 + 20,
+            "proxy_downstream_frames_out": frames,
+            "proxy_downstream_bytes_out": bytes_out,
+            "max_bandwidth_bytes_per_s": bytes_out // 10,
+            "max_frame_rate_per_s": max(1, frames // 2),
+            "max_update_rate_per_s": max_update_rate_per_s,
+            "stale_fraction": stale_fraction,
+            "effective_batch_window_ms": effective_windows[-1],
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        (run_dir / "gateway_metrics.json").write_text(
+            json.dumps(
+                {
+                    "adaptive_window_increase_events": increase_events,
+                    "adaptive_window_decrease_events": decrease_events,
+                    "last_adaptation_reason": last_reason,
+                    "effective_batch_window_ms": effective_windows[-1],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._write_gateway_forward_log(run_dir / "gateway_forward_log.csv", effective_windows, adaptation_reasons)
+        self._write_timeseries_with_update_rates(run_dir / "timeseries.csv", update_rates)
+
     def _write_dashboard_measurements(self, path: Path, latencies: list[int]) -> None:
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
@@ -416,6 +590,58 @@ class BuildReportAssetsTests(unittest.TestCase):
             writer.writerow(["epoch_second", "bandwidth_bytes_per_s", "frame_rate_per_s", "update_rate_per_s"])
             writer.writerow(["1", "1000", "5", "20"])
             writer.writerow(["2", "1400", "4", "15"])
+
+    def _write_timeseries_with_update_rates(self, path: Path, update_rates: list[int]) -> None:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["epoch_second", "bandwidth_bytes_per_s", "frame_rate_per_s", "update_rate_per_s"])
+            for index, rate in enumerate(update_rates, start=1):
+                writer.writerow([str(index), str(1000 + index * 100), "4", str(rate)])
+
+    def _write_gateway_forward_log(self, path: Path, effective_windows: list[int], adaptation_reasons: list[str]) -> None:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                [
+                    "timestamp",
+                    "mode",
+                    "frame_id",
+                    "flush_reason",
+                    "batch_window_ms",
+                    "effective_batch_window_ms",
+                    "adaptation_reason",
+                    "frame_size",
+                    "frame_payload_bytes",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_recv_gateway",
+                    "ts_sent_ws",
+                    "bytes",
+                ]
+            )
+            for index, (window_ms, reason) in enumerate(zip(effective_windows, adaptation_reasons), start=1):
+                writer.writerow(
+                    [
+                        "2026-04-04T00:00:00Z",
+                        "v3",
+                        str(index),
+                        "timer",
+                        "250",
+                        str(window_ms),
+                        reason,
+                        "5",
+                        "1200",
+                        f"sensor-{index}",
+                        "temperature",
+                        f"msg-{index}",
+                        str(1000 + index * 100),
+                        str(1000 + index * 100),
+                        str(1000 + index * 100),
+                        "1200",
+                    ]
+                )
 
 
 if __name__ == "__main__":

@@ -170,3 +170,61 @@ The paper-ready conclusion is therefore narrow and defensible: on this dataset a
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the new isolation runner, test updates, regenerated tracked report assets, the reproducibility update, and this appended `report.md`.
+
+## MP6 Task 4 Session Report
+
+### Task Goal
+
+Evaluate whether adaptive publish rate helps under impairment by running a controlled Intel `v2` versus `v3` comparison under `bandwidth_200kbps` and `loss_2pct`, regenerating tracked report assets, and recording a paper-ready answer tied to stale fraction, rendered cadence, and the actual adaptive-window trace.
+
+### What Was Changed
+
+- Extended `experiments/run_sweep.py` so a sweep can pass gateway-only environment overrides through `SweepConfig.gateway_env_overrides`.
+- Added `experiments/run_adaptive_impairment_sweep.py` to run the dedicated Intel `v2` versus `v3` adaptive impairment sweep.
+- Extended `experiments/build_report_assets.py` with optional `intel_adaptive_sweep_dir` support and generated:
+  - `report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv`
+  - `report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md`
+  - `report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png`
+- Updated generated outputs to include the adaptive evidence:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+  - `report/assets/tables/intel_key_claims.md`
+- Updated `report/reproducibility.md` with the local-only adaptive sweep command and matching report-asset regeneration command.
+- Added and updated tests for the new runner, the gateway override plumbing, and the optional asset-builder path.
+- Updated the fourth M6 checklist item locally only and narrowed it to an adaptation-trace-backed claim instead of requiring separate backlog instrumentation.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_run_sweep.py tests/test_run_adaptive_impairment_sweep.py tests/test_build_report_assets.py
+python .\experiments\run_adaptive_impairment_sweep.py --sweep-id intel-v2-v3-adaptive-20260404 --data-file .\experiments\logs\generated_inputs\intel_lab_final_20260403.csv
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+```
+
+### Verification Results
+
+- `python -m pytest tests/test_run_sweep.py tests/test_run_adaptive_impairment_sweep.py tests/test_build_report_assets.py` passed before the real sweep.
+- The real Intel adaptive sweep completed successfully and wrote local logs under `experiments/logs/intel-v2-v3-adaptive-20260404/`.
+- The tracked report assets regenerated successfully with the new optional adaptive-sweep input and now include the adaptive table and figure.
+
+### Measured Intel V2 Versus V3 Adaptive Outcome
+
+| Scenario | Latency p95 delta (`v3` vs `v2`) | Stale fraction delta | Max update-rate delta | Frames delta | Bytes delta | V3 window range | V3 adaptive events |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `bandwidth_200kbps` | `-8.55 ms` | `0.0` | `0.0%` | `0.0%` | `0.0%` | `250 ms` to `250 ms` | `0` increase, `0` decrease |
+| `loss_2pct` | `+7.45 ms` | `0.0` | `0.0%` | `0.0%` | `0.0%` | `250 ms` to `250 ms` | `0` increase, `0` decrease |
+
+Additional raw-trace observation: the last `v3` adaptation reason in both runs was `healthy_streak=1`, and the effective batch window stayed flat at the base `250 ms` for the entire trace.
+
+### Analysis
+
+This task also produced a useful negative result. Under the current adaptive defaults, `v3` did not actually adapt in either required impairment scenario. The effective batch window stayed fixed at `250 ms`, `adaptive_window_increase_events` and `adaptive_window_decrease_events` both remained `0`, and all of the headline paper metrics stayed unchanged versus `v2` except for small mixed latency noise.
+
+That means the defensible paper answer is narrow: in this Intel qos0 setup, the current adaptive policy did not activate under `bandwidth_200kbps` or `loss_2pct`, so it did not improve stale fraction or rendered cadence beyond fixed-window `v2`. The new adaptation-trace figure still closes the checklist gap because it makes that null result explicit instead of leaving the paper to imply that adaptation helped when the measured trace stayed flat.
+
+This also keeps the scope correct for M6. There is no need to add new backlog instrumentation just to complete the item; the paper can now state that under the default thresholds, the adaptive path did not materially change behavior in these two impairment cases.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the new adaptive runner, sweep-plumbing update, regenerated tracked report assets, the reproducibility update, and this appended `report.md`.

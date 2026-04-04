@@ -115,6 +115,82 @@ class RunSweepTests(unittest.TestCase):
             self.assertEqual(len(gateway_envs), 1)
             self.assertEqual(gateway_envs[0]["BATCH_WINDOW_MS"], "500")
 
+    def test_run_once_propagates_gateway_env_overrides_to_gateway_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            tmp_dir = Path(tmp_dir_name)
+            gateway_envs: list[dict[str, str]] = []
+
+            class FakeProcess:
+                returncode = 0
+
+                def wait(self, timeout: int | None = None) -> int:
+                    return 0
+
+                def poll(self) -> int:
+                    return 0
+
+                def terminate(self) -> None:
+                    return None
+
+                def kill(self) -> None:
+                    return None
+
+            def fake_spawn(command: list[str], *, env: dict[str, str], stdout_path: Path, stderr_path: Path) -> FakeProcess:
+                if command[-2:] == ["-m", "gateway.app"]:
+                    gateway_envs.append(env)
+                return FakeProcess()
+
+            class FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def __enter__(self) -> "FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> None:
+                    return None
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+            config = run_sweep.SweepConfig(
+                sweep_id="gateway-override-test",
+                variants=["v3"],
+                qos_values=[0],
+                scenarios=["loss_2pct"],
+                data_file=Path("intel.csv"),
+                duration_s=1,
+                replay_speed=1.0,
+                sensor_limit=1,
+                burst_enabled=False,
+                burst_start_s=0,
+                burst_duration_s=0,
+                burst_speed_multiplier=1.0,
+                gateway_host="127.0.0.1",
+                gateway_port=8000,
+                proxy_host="127.0.0.1",
+                proxy_port=9000,
+                mqtt_host="127.0.0.1",
+                mqtt_port=1883,
+                run_browser=False,
+                batch_window_ms=250,
+                gateway_env_overrides={"ADAPTIVE_STEP_UP_MS": "125", "ADAPTIVE_SEND_SLOW_MS": "55"},
+            )
+
+            with (
+                patch.object(run_sweep, "LOGS_ROOT", tmp_dir),
+                patch("experiments.run_sweep._find_python", return_value="python"),
+                patch("experiments.run_sweep._spawn", side_effect=fake_spawn),
+                patch("experiments.run_sweep._wait_for_http"),
+                patch("experiments.run_sweep.analyze_run"),
+                patch("experiments.run_sweep.urllib.request.urlopen", side_effect=[FakeResponse({}), FakeResponse({})]),
+            ):
+                run_sweep.run_once(config, variant="v3", mqtt_qos=0, scenario_name="loss_2pct")
+
+            self.assertEqual(len(gateway_envs), 1)
+            self.assertEqual(gateway_envs[0]["ADAPTIVE_STEP_UP_MS"], "125")
+            self.assertEqual(gateway_envs[0]["ADAPTIVE_SEND_SLOW_MS"], "55")
+
 
 if __name__ == "__main__":
     unittest.main()

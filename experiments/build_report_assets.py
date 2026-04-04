@@ -19,6 +19,7 @@ INTEL_BANDWIDTH_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "outage_
 INTEL_BATCH_WINDOW_SWEEP_WINDOWS = (50, 100, 250, 500, 1000)
 INTEL_V1_V2_ISOLATION_SCENARIOS = ("clean", "bandwidth_200kbps", "outage_5s")
 INTEL_V1_V2_ISOLATION_WINDOWS = (50, 100, 250, 500, 1000)
+INTEL_ADAPTIVE_SCENARIOS = ("bandwidth_200kbps", "loss_2pct")
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -311,6 +312,154 @@ def _describe_v1_v2_isolation_scenario(rows: list[dict[str, object]], scenario: 
     return description
 
 
+def _load_gateway_frame_trace(run_dir: Path) -> list[dict[str, object]]:
+    csv_path = run_dir / "gateway_forward_log.csv"
+    if not csv_path.exists():
+        return []
+
+    rows_by_frame: dict[tuple[str, str], dict[str, object]] = {}
+    for row in _load_csv(csv_path):
+        frame_id = str(row.get("frame_id", ""))
+        ts_sent_ws = str(row.get("ts_sent_ws", ""))
+        if not frame_id or not ts_sent_ws:
+            continue
+        key = (frame_id, ts_sent_ws)
+        rows_by_frame[key] = {
+            "frame_id": int(frame_id),
+            "ts_sent_ws": int(ts_sent_ws),
+            "effective_batch_window_ms": int(row.get("effective_batch_window_ms", 0) or 0),
+            "adaptation_reason": row.get("adaptation_reason", ""),
+        }
+    return sorted(rows_by_frame.values(), key=lambda item: int(item["ts_sent_ws"]))
+
+
+def _load_gateway_metrics(run_dir: Path) -> dict[str, object]:
+    metrics_path = run_dir / "gateway_metrics.json"
+    if not metrics_path.exists():
+        return {}
+    return _load_json(metrics_path)
+
+
+def _trace_window_bounds(trace_rows: list[dict[str, object]], *, fallback_window_ms: int) -> tuple[int, int]:
+    windows = [int(row["effective_batch_window_ms"]) for row in trace_rows if int(row["effective_batch_window_ms"]) > 0]
+    if not windows:
+        return fallback_window_ms, fallback_window_ms
+    return min(windows), max(windows)
+
+
+def _relative_seconds_from_trace(trace_rows: list[dict[str, object]]) -> list[float]:
+    if not trace_rows:
+        return []
+    first_ts = int(trace_rows[0]["ts_sent_ws"])
+    return [round((int(row["ts_sent_ws"]) - first_ts) / 1000, 3) for row in trace_rows]
+
+
+def _load_update_rate_trace(run_dir: Path) -> tuple[list[float], list[float]]:
+    series = _load_timeseries(run_dir)
+    if not series:
+        return [], []
+    first_second = series[0]["epoch_second"]
+    x_values = [point["epoch_second"] - first_second for point in series]
+    y_values = [point["update_rate_per_s"] for point in series]
+    return x_values, y_values
+
+
+def _build_intel_adaptive_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    filtered: dict[tuple[str, str], dict[str, object]] = {}
+    for row in rows:
+        scenario = str(row.get("scenario", ""))
+        variant = str(row.get("variant", ""))
+        if scenario not in INTEL_ADAPTIVE_SCENARIOS or variant not in {"v2", "v3"}:
+            continue
+        if int(row["mqtt_qos"]) != 0:
+            continue
+        filtered[(scenario, variant)] = row
+
+    comparison_rows: list[dict[str, object]] = []
+    missing_pairs: list[str] = []
+    for scenario in INTEL_ADAPTIVE_SCENARIOS:
+        v2_row = filtered.get((scenario, "v2"))
+        v3_row = filtered.get((scenario, "v3"))
+        if v2_row is None or v3_row is None:
+            missing_pairs.append(scenario)
+            continue
+        v2_trace = _load_gateway_frame_trace(Path(str(v2_row["run_dir"])))
+        v3_trace = _load_gateway_frame_trace(Path(str(v3_row["run_dir"])))
+        v2_min_window_ms, v2_max_window_ms = _trace_window_bounds(
+            v2_trace,
+            fallback_window_ms=int(v2_row.get("effective_batch_window_ms", 0)),
+        )
+        v3_min_window_ms, v3_max_window_ms = _trace_window_bounds(
+            v3_trace,
+            fallback_window_ms=int(v3_row.get("effective_batch_window_ms", 0)),
+        )
+        v3_metrics = _load_gateway_metrics(Path(str(v3_row["run_dir"])))
+        comparison_rows.append(
+            {
+                "scenario": scenario,
+                "v2_latency_p95_ms": float(v2_row["latency_p95_ms"]),
+                "v3_latency_p95_ms": float(v3_row["latency_p95_ms"]),
+                "latency_p95_delta_ms": round(float(v3_row["latency_p95_ms"]) - float(v2_row["latency_p95_ms"]), 3),
+                "v2_stale_fraction": float(v2_row.get("stale_fraction", 0.0)),
+                "v3_stale_fraction": float(v3_row.get("stale_fraction", 0.0)),
+                "stale_fraction_delta": round(
+                    float(v3_row.get("stale_fraction", 0.0)) - float(v2_row.get("stale_fraction", 0.0)),
+                    6,
+                ),
+                "v2_max_update_rate_per_s": int(v2_row.get("max_update_rate_per_s", 0)),
+                "v3_max_update_rate_per_s": int(v3_row.get("max_update_rate_per_s", 0)),
+                "update_rate_delta_pct": _format_delta(
+                    float(v2_row.get("max_update_rate_per_s", 0)),
+                    float(v3_row.get("max_update_rate_per_s", 0)),
+                ),
+                "v2_proxy_downstream_frames_out": int(v2_row["proxy_downstream_frames_out"]),
+                "v3_proxy_downstream_frames_out": int(v3_row["proxy_downstream_frames_out"]),
+                "downstream_frames_delta_pct": _format_delta(
+                    float(v2_row["proxy_downstream_frames_out"]),
+                    float(v3_row["proxy_downstream_frames_out"]),
+                ),
+                "v2_proxy_downstream_bytes_out": int(v2_row["proxy_downstream_bytes_out"]),
+                "v3_proxy_downstream_bytes_out": int(v3_row["proxy_downstream_bytes_out"]),
+                "downstream_bytes_delta_pct": _format_delta(
+                    float(v2_row["proxy_downstream_bytes_out"]),
+                    float(v3_row["proxy_downstream_bytes_out"]),
+                ),
+                "v2_min_effective_batch_window_ms": v2_min_window_ms,
+                "v2_max_effective_batch_window_ms": v2_max_window_ms,
+                "v3_min_effective_batch_window_ms": v3_min_window_ms,
+                "v3_max_effective_batch_window_ms": v3_max_window_ms,
+                "v3_adaptive_window_increase_events": int(v3_metrics.get("adaptive_window_increase_events", 0)),
+                "v3_adaptive_window_decrease_events": int(v3_metrics.get("adaptive_window_decrease_events", 0)),
+                "v3_last_adaptation_reason": str(v3_metrics.get("last_adaptation_reason", "")),
+                "v2_run_dir": str(v2_row["run_dir"]),
+                "v3_run_dir": str(v3_row["run_dir"]),
+            }
+        )
+    if missing_pairs:
+        raise ValueError(f"Missing Intel v2/v3 adaptive rows for: {', '.join(missing_pairs)}")
+    return comparison_rows
+
+
+def _describe_adaptive_scenario(rows: list[dict[str, object]], scenario: str) -> str:
+    row = next(candidate for candidate in rows if candidate["scenario"] == scenario)
+    v3_min_window = int(row["v3_min_effective_batch_window_ms"])
+    v3_max_window = int(row["v3_max_effective_batch_window_ms"])
+    if v3_min_window == v3_max_window:
+        window_clause = f"V3's effective batch window stayed flat at {v3_min_window} ms"
+    else:
+        window_clause = (
+            f"V3's effective batch window moved from {v3_min_window} ms to {v3_max_window} ms "
+            f"with {row['v3_adaptive_window_increase_events']} increase events and "
+            f"{row['v3_adaptive_window_decrease_events']} decrease events"
+        )
+    return (
+        f"Under {scenario}, adaptive V3 changed stale fraction by {row['stale_fraction_delta']:+.6f}, "
+        f"max rendered update rate by {row['update_rate_delta_pct']}, downstream frames by {row['downstream_frames_delta_pct']}, "
+        f"and downstream bytes by {row['downstream_bytes_delta_pct']} versus fixed-window V2. "
+        f"{window_clause}. The last adaptation reason was `{row['v3_last_adaptation_reason']}`."
+    )
+
+
 def _plot_latency_cdf(rows: list[dict[str, object]], *, scenario: str, mqtt_qos: int, output_path: Path) -> None:
     figure = plt.figure(figsize=(8, 5))
     for variant in ("v0", "v2", "v4"):
@@ -428,6 +577,65 @@ def _plot_v1_v2_isolation(rows: list[dict[str, object]], *, output_path: Path) -
     plt.close(figure)
 
 
+def _plot_adaptive_impairment(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    figure, axes = plt.subplots(len(INTEL_ADAPTIVE_SCENARIOS), 1, figsize=(10, 8), sharex=False)
+    if len(INTEL_ADAPTIVE_SCENARIOS) == 1:
+        axes = [axes]
+
+    for axis, scenario in zip(axes, INTEL_ADAPTIVE_SCENARIOS):
+        row = next(candidate for candidate in rows if candidate["scenario"] == scenario)
+        v2_run_dir = Path(str(row["v2_run_dir"]))
+        v3_run_dir = Path(str(row["v3_run_dir"]))
+        v2_trace = _load_gateway_frame_trace(v2_run_dir)
+        v3_trace = _load_gateway_frame_trace(v3_run_dir)
+        v2_x = _relative_seconds_from_trace(v2_trace)
+        v3_x = _relative_seconds_from_trace(v3_trace)
+        v2_windows = [int(item["effective_batch_window_ms"]) for item in v2_trace]
+        v3_windows = [int(item["effective_batch_window_ms"]) for item in v3_trace]
+
+        right_axis = axis.twinx()
+
+        if v2_x and v2_windows:
+            axis.step(v2_x, v2_windows, where="post", linestyle="--", color="tab:gray", label="V2 fixed window")
+        else:
+            axis.axhline(
+                int(row["v2_min_effective_batch_window_ms"]),
+                linestyle="--",
+                color="tab:gray",
+                label="V2 fixed window",
+            )
+        if v3_x and v3_windows:
+            axis.step(v3_x, v3_windows, where="post", color="tab:red", label="V3 effective window")
+        else:
+            axis.axhline(
+                int(row["v3_min_effective_batch_window_ms"]),
+                color="tab:red",
+                label="V3 effective window",
+            )
+
+        v2_rate_x, v2_rates = _load_update_rate_trace(v2_run_dir)
+        v3_rate_x, v3_rates = _load_update_rate_trace(v3_run_dir)
+        if v2_rate_x and v2_rates:
+            right_axis.plot(v2_rate_x, v2_rates, color="tab:blue", alpha=0.6, label="V2 update rate")
+        if v3_rate_x and v3_rates:
+            right_axis.plot(v3_rate_x, v3_rates, color="tab:green", alpha=0.6, label="V3 update rate")
+
+        axis.set_title(f"Adaptive batching under {scenario}")
+        axis.set_xlabel("Relative second")
+        axis.set_ylabel("Effective batch window (ms)", color="tab:red")
+        right_axis.set_ylabel("Rendered update rate per second", color="tab:blue")
+        axis.grid(True, axis="y", alpha=0.3)
+
+        left_handles, left_labels = axis.get_legend_handles_labels()
+        right_handles, right_labels = right_axis.get_legend_handles_labels()
+        axis.legend(left_handles + right_handles, left_labels + right_labels, loc="best")
+
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _load_demo_summary(demo_dir: Path, side: str) -> dict[str, int]:
     payload = _load_json(demo_dir / f"{side}_dashboard" / "dashboard_summary.json")
     summary = payload.get("summary", {})
@@ -455,6 +663,7 @@ def _build_key_claims(
     demo_dir: Path,
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_rows: list[dict[str, object]] | None = None,
 ) -> str:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -527,6 +736,17 @@ def _build_key_claims(
                 )
             ),
         )
+    if intel_adaptive_rows is not None:
+        lines.insert(
+            3,
+            (
+                "- Intel V2 versus V3 adaptive sweep shows what adaptive batching changed under impairment: "
+                + " ".join(
+                    _describe_adaptive_scenario(intel_adaptive_rows, scenario)
+                    for scenario in INTEL_ADAPTIVE_SCENARIOS
+                )
+            ),
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -539,6 +759,7 @@ def _write_final_report(
     aot_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_rows: list[dict[str, object]] | None = None,
 ) -> None:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -581,6 +802,10 @@ The Intel V2 batch-window sweep answers the second paper question directly. As t
         report_text += f"""
 The Intel V1 versus V2 isolation sweep answers the third paper question directly. Here, V1 is batching alone and V2 is batching plus compaction and exact-duplicate suppression. {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'clean')} {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'bandwidth_200kbps')} {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'outage_5s')} This is the right framing for the paper: the measured effect of V2 beyond batching alone can be mixed across bytes, frames, and latency, so the report should describe the observed deltas rather than assume a universal win. The paper-ready outputs for this task are [report/assets/tables/intel_v1_vs_v2_isolation.md](assets/tables/intel_v1_vs_v2_isolation.md) and [report/assets/figures/intel_v1_vs_v2_isolation.png](assets/figures/intel_v1_vs_v2_isolation.png).
 """
+    if intel_adaptive_rows is not None:
+        report_text += f"""
+The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper question directly. Here, V2 is fixed-window batching and V3 is adaptive batching under the same base `250 ms` configuration. {_describe_adaptive_scenario(intel_adaptive_rows, 'bandwidth_200kbps')} {_describe_adaptive_scenario(intel_adaptive_rows, 'loss_2pct')} This is the right framing for the paper: the adaptive claim should be limited to the measured stale-fraction, cadence, and window-trace changes under these impairments, not generalized into a broader backlog or reliability claim. The paper-ready outputs for this task are [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md) and [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png).
+"""
     report_text += f"""
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
@@ -614,6 +839,7 @@ def _write_deliverable_gate(
     output_dir: Path,
     intel_batch_sweep_dir: Path | None = None,
     intel_v1_v2_sweep_dir: Path | None = None,
+    intel_adaptive_sweep_dir: Path | None = None,
 ) -> None:
     batch_sweep_line = ""
     batch_summary_tables = ""
@@ -625,6 +851,11 @@ def _write_deliverable_gate(
     if intel_v1_v2_sweep_dir is not None:
         isolation_sweep_line = f"- Intel V1 versus V2 isolation sweep run id: `{intel_v1_v2_sweep_dir.name}` at `{intel_v1_v2_sweep_dir}`\n"
         isolation_summary_tables = ", [report/assets/tables/intel_v1_vs_v2_isolation.csv](assets/tables/intel_v1_vs_v2_isolation.csv), [report/assets/tables/intel_v1_vs_v2_isolation.md](assets/tables/intel_v1_vs_v2_isolation.md), [report/assets/figures/intel_v1_vs_v2_isolation.png](assets/figures/intel_v1_vs_v2_isolation.png)"
+    adaptive_sweep_line = ""
+    adaptive_summary_tables = ""
+    if intel_adaptive_sweep_dir is not None:
+        adaptive_sweep_line = f"- Intel V2 versus V3 adaptive sweep run id: `{intel_adaptive_sweep_dir.name}` at `{intel_adaptive_sweep_dir}`\n"
+        adaptive_summary_tables = ", [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv](assets/tables/intel_v2_vs_v3_adaptive_impairment.csv), [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md), [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png)"
     content = f"""# Deliverable Completion Gate
 
 ## M1-M3 System Path
@@ -638,8 +869,8 @@ def _write_deliverable_gate(
 - Intel primary sweep run id: `{intel_sweep_dir.name}` at `{intel_sweep_dir}`
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
-{batch_sweep_line}{isolation_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}{isolation_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+{batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -674,6 +905,7 @@ def build_report_assets(
     output_dir: Path,
     intel_batch_sweep_dir: Path | None = None,
     intel_v1_v2_sweep_dir: Path | None = None,
+    intel_adaptive_sweep_dir: Path | None = None,
 ) -> dict[str, object]:
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
@@ -686,6 +918,11 @@ def build_report_assets(
     intel_v1_v2_rows = (
         _build_intel_v1_v2_isolation_rows(_load_summary_rows(intel_v1_v2_sweep_dir))
         if intel_v1_v2_sweep_dir is not None
+        else None
+    )
+    intel_adaptive_rows = (
+        _build_intel_adaptive_rows(_load_summary_rows(intel_adaptive_sweep_dir))
+        if intel_adaptive_sweep_dir is not None
         else None
     )
 
@@ -774,8 +1011,41 @@ def build_report_assets(
                 "v2_run_dir",
             ],
         )
+    if intel_adaptive_rows is not None:
+        _write_csv(tables_dir / "intel_v2_vs_v3_adaptive_impairment.csv", intel_adaptive_rows)
+        _write_markdown_table(
+            tables_dir / "intel_v2_vs_v3_adaptive_impairment.md",
+            intel_adaptive_rows,
+            columns=[
+                "scenario",
+                "v2_latency_p95_ms",
+                "v3_latency_p95_ms",
+                "latency_p95_delta_ms",
+                "v2_stale_fraction",
+                "v3_stale_fraction",
+                "stale_fraction_delta",
+                "v2_max_update_rate_per_s",
+                "v3_max_update_rate_per_s",
+                "update_rate_delta_pct",
+                "v2_proxy_downstream_frames_out",
+                "v3_proxy_downstream_frames_out",
+                "downstream_frames_delta_pct",
+                "v2_proxy_downstream_bytes_out",
+                "v3_proxy_downstream_bytes_out",
+                "downstream_bytes_delta_pct",
+                "v2_min_effective_batch_window_ms",
+                "v2_max_effective_batch_window_ms",
+                "v3_min_effective_batch_window_ms",
+                "v3_max_effective_batch_window_ms",
+                "v3_adaptive_window_increase_events",
+                "v3_adaptive_window_decrease_events",
+                "v3_last_adaptation_reason",
+                "v2_run_dir",
+                "v3_run_dir",
+            ],
+        )
     (tables_dir / "intel_key_claims.md").write_text(
-        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows, intel_v1_v2_rows),
+        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows, intel_v1_v2_rows, intel_adaptive_rows),
         encoding="utf-8",
     )
 
@@ -813,6 +1083,11 @@ def build_report_assets(
             intel_v1_v2_rows,
             output_path=figures_dir / "intel_v1_vs_v2_isolation.png",
         )
+    if intel_adaptive_rows is not None:
+        _plot_adaptive_impairment(
+            intel_adaptive_rows,
+            output_path=figures_dir / "intel_v2_vs_v3_adaptive_impairment.png",
+        )
     _copy_demo_artifacts(demo_dir, figures_dir)
 
     manifest = {
@@ -821,6 +1096,7 @@ def build_report_assets(
         "demo_dir": str(demo_dir),
         "intel_batch_sweep_dir": str(intel_batch_sweep_dir) if intel_batch_sweep_dir is not None else None,
         "intel_v1_v2_sweep_dir": str(intel_v1_v2_sweep_dir) if intel_v1_v2_sweep_dir is not None else None,
+        "intel_adaptive_sweep_dir": str(intel_adaptive_sweep_dir) if intel_adaptive_sweep_dir is not None else None,
         "intel_runs": [row["run_id"] for row in intel_rows],
         "aot_runs": [row["run_id"] for row in aot_rows],
         "generated_figures": [
@@ -855,6 +1131,14 @@ def build_report_assets(
                 str(tables_dir / "intel_v1_vs_v2_isolation.md"),
             ]
         )
+    if intel_adaptive_rows is not None:
+        manifest["generated_figures"].append(str(figures_dir / "intel_v2_vs_v3_adaptive_impairment.png"))
+        manifest["generated_tables"].extend(
+            [
+                str(tables_dir / "intel_v2_vs_v3_adaptive_impairment.csv"),
+                str(tables_dir / "intel_v2_vs_v3_adaptive_impairment.md"),
+            ]
+        )
     (output_dir / "evidence_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -866,6 +1150,7 @@ def build_report_assets(
         aot_rows=aot_rows,
         intel_batch_rows=intel_batch_rows,
         intel_v1_v2_rows=intel_v1_v2_rows,
+        intel_adaptive_rows=intel_adaptive_rows,
     )
     _write_deliverable_gate(
         intel_sweep_dir=intel_sweep_dir,
@@ -874,6 +1159,7 @@ def build_report_assets(
         output_dir=output_dir,
         intel_batch_sweep_dir=intel_batch_sweep_dir,
         intel_v1_v2_sweep_dir=intel_v1_v2_sweep_dir,
+        intel_adaptive_sweep_dir=intel_adaptive_sweep_dir,
     )
     return manifest
 
@@ -885,6 +1171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--demo-dir", type=Path, required=True)
     parser.add_argument("--intel-batch-sweep-dir", type=Path)
     parser.add_argument("--intel-v1-v2-sweep-dir", type=Path)
+    parser.add_argument("--intel-adaptive-sweep-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
@@ -898,6 +1185,7 @@ def main() -> None:
         output_dir=args.output_dir,
         intel_batch_sweep_dir=args.intel_batch_sweep_dir,
         intel_v1_v2_sweep_dir=args.intel_v1_v2_sweep_dir,
+        intel_adaptive_sweep_dir=args.intel_adaptive_sweep_dir,
     )
     print(json.dumps(manifest, indent=2))
 

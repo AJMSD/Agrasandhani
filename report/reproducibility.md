@@ -83,6 +83,18 @@ python .\experiments\run_v1_v2_isolation_sweep.py `
 
 This produces local-only logs under `experiments/logs/intel-v1-v2-isolation-20260403/` for `v1` and `v2` across `clean`, `bandwidth_200kbps`, and `outage_5s` at the canonical `50,100,250,500,1000 ms` windows.
 
+## M6 Adaptive Impairment Sweep
+
+If the normalized Intel replay CSV already exists locally, run the dedicated V2-versus-V3 adaptive impairment sweep:
+
+```powershell
+python .\experiments\run_adaptive_impairment_sweep.py `
+  --sweep-id intel-v2-v3-adaptive-20260404 `
+  --data-file .\experiments\logs\generated_inputs\intel_lab_final_20260403.csv
+```
+
+This produces local-only logs under `experiments/logs/intel-v2-v3-adaptive-20260404/` for `v2` and `v3` across `bandwidth_200kbps` and `loss_2pct` using the default adaptive gateway settings and a base `250 ms` batch window.
+
 ## Local-Only Outputs
 
 - `experiments/logs/final-deliverables-<STAMP>/manifest.json`
@@ -95,6 +107,7 @@ This produces local-only logs under `experiments/logs/intel-v1-v2-isolation-2026
 - `experiments/logs/final-demo-<STAMP>/demo/`
 - `experiments/logs/intel-v2-batch-window-<STAMP>/`
 - `experiments/logs/intel-v1-v2-isolation-<STAMP>/`
+- `experiments/logs/intel-v2-v3-adaptive-<STAMP>/`
 
 These remain ignored and should not be committed.
 
@@ -118,6 +131,7 @@ python .\experiments\build_report_assets.py `
   --demo-dir .\experiments\logs\final-demo-20260403\demo `
   --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 `
   --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 `
+  --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 `
   --output-dir .\report\assets
 ```
 
