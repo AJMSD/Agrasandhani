@@ -1139,6 +1139,75 @@ def _build_key_claims(
     return "\n".join(lines) + "\n"
 
 
+def _build_claim_guardrail_review(
+    intel_rows: list[dict[str, object]],
+    intel_qos_rows: list[dict[str, object]],
+    intel_outage_freshness_rows: list[dict[str, object]],
+) -> str:
+    bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
+    clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
+    qos1_duplicates = sum(int(row["qos1_duplicates_dropped"]) for row in intel_qos_rows)
+
+    table_rows = [
+        {
+            "guardrail": "Do not claim lower latency unless measured",
+            "blocked_unbounded_claim": "Agrasandhani lowers latency overall.",
+            "measured_evidence": (
+                f"Intel clean qos0 p95 latency is {clean_v0['latency_p95_ms']} ms for V0 and "
+                f"{clean_v4['latency_p95_ms']} ms for V4; latency increased on this path."
+            ),
+            "safe_wording": "V4 trades latency for stability and lower frame churn in this setup.",
+        },
+        {
+            "guardrail": "Do not claim improved reliability unless reliability is defined",
+            "blocked_unbounded_claim": "QoS1 improves reliability for this system in general.",
+            "measured_evidence": (
+                f"Intel qos1 exact duplicate-drop counter totals {qos1_duplicates} in the current local matrix; "
+                "this does not define or quantify reliability as a broad property."
+            ),
+            "safe_wording": "In this local setup, qos0 and qos1 showed mixed latency deltas with zero observed exact duplicate drops.",
+        },
+        {
+            "guardrail": "Do not claim reduced network loss",
+            "blocked_unbounded_claim": "Agrasandhani reduces network packet loss.",
+            "measured_evidence": (
+                "The experiments use scenario-driven impairment injection and report application-level outcomes; "
+                "no direct network-loss reduction metric is measured."
+            ),
+            "safe_wording": "The smart path provides graceful degradation and clearer dashboard behavior under the tested impairment scenarios.",
+        },
+        {
+            "guardrail": "Use safer measured wording for bounded paper claims",
+            "blocked_unbounded_claim": "Universal performance improvements across all metrics.",
+            "measured_evidence": _describe_outage_freshness(intel_outage_freshness_rows),
+            "safe_wording": (
+                "Prefer bounded wording such as reduces downstream frame cadence, improves freshness visibility under degraded "
+                "networks, reduces duplicate and redundant transmissions when measured, and provides graceful outage behavior."
+            ),
+        },
+    ]
+
+    columns = [
+        "guardrail",
+        "blocked_unbounded_claim",
+        "measured_evidence",
+        "safe_wording",
+    ]
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+    lines = [header, separator]
+    for row in table_rows:
+        lines.append("| " + " | ".join(str(row[column]) for column in columns) + " |")
+
+    return (
+        "# Intel Claim Guardrail Review\n\n"
+        "This review blocks unbounded paper claims and ties each statement to measured evidence from the current local runs.\n\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _write_final_report(
     *,
     intel_sweep_dir: Path,
@@ -1203,6 +1272,8 @@ The Intel qos0 outage freshness trace answers the fifth paper question directly.
 The Intel qos0 versus qos1 comparison answers the next paper-readiness question directly with a side-by-side table and figure. Across the Intel matrix (`v0`, `v2`, `v4` by `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s`), the measured exact duplicate-drop counter for qos1 stayed at {qos1_duplicates}. QoS1 versus QoS0 downstream bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')} for V0, {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')} for V2, and {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')} for V4. Latency p95 deltas are captured in the same table so the paper can make a bounded statement about observed setup-specific behavior rather than asserting broader reliability guarantees. The paper-ready outputs for this task are [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md) and [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png).
 
 The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency p95, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
+
+The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
 """
     report_text += f"""
 
@@ -1241,6 +1312,7 @@ def _write_deliverable_gate(
 ) -> None:
     freshness_summary_tables = ", [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv), [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md), [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png)"
     condensed_summary_tables = ", [report/assets/tables/intel_condensed_summary.csv](assets/tables/intel_condensed_summary.csv), [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md)"
+    guardrail_summary_tables = ", [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md)"
     batch_sweep_line = ""
     batch_summary_tables = ""
     if intel_batch_sweep_dir is not None:
@@ -1270,7 +1342,7 @@ def _write_deliverable_gate(
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
 {batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}{condensed_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}{condensed_summary_tables}{guardrail_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -1521,6 +1593,14 @@ def build_report_assets(
         ),
         encoding="utf-8",
     )
+    (tables_dir / "intel_claim_guardrail_review.md").write_text(
+        _build_claim_guardrail_review(
+            intel_rows,
+            intel_qos_rows,
+            intel_outage_freshness_rows,
+        ),
+        encoding="utf-8",
+    )
 
     _plot_latency_cdf(
         intel_rows,
@@ -1602,6 +1682,7 @@ def build_report_assets(
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
             str(tables_dir / "aot_validation_summary.csv"),
             str(tables_dir / "intel_key_claims.md"),
+            str(tables_dir / "intel_claim_guardrail_review.md"),
         ],
     }
     if intel_batch_rows is not None:

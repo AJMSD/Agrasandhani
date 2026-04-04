@@ -410,3 +410,54 @@ That means the paper can now point readers to one table for a quick evidence ove
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder/test changes, regenerated tracked report artifacts, refreshed generated report docs, and this appended `report.md`.
+
+## MP6 Task 8 Session Report
+
+### Task Goal
+
+Complete the final open M6 checklist item by producing an explicit claim guardrail review artifact that blocks unbounded paper claims unless directly measured, then regenerate report outputs and document what the bounded interpretation means for the final paper narrative.
+
+### What Was Changed
+
+- Extended `experiments/build_report_assets.py` with `_build_claim_guardrail_review(...)` to generate:
+  - `report/assets/tables/intel_claim_guardrail_review.md`
+- Wired the guardrail artifact into generated report outputs:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+- Updated `tests/test_build_report_assets.py` to lock guardrail output contract and references.
+- Updated `PROJECT_CHECKLIST.md` locally only to mark the final M6 task done.
+
+### Commands Run
+
+```powershell
+python -m unittest tests.test_build_report_assets
+python .\experiments\build_report_assets.py --intel-sweep-dir experiments/logs/final-intel-primary-20260403 --aot-sweep-dir experiments/logs/final-aot-validation-20260403 --demo-dir experiments/logs/final-demo-20260403/demo --intel-batch-sweep-dir experiments/logs/intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir experiments/logs/intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir experiments/logs/intel-v2-v3-adaptive-20260404 --output-dir report/assets
+```
+
+### Verification Results
+
+- `python -m unittest tests.test_build_report_assets` passed (`Ran 5 tests ... OK`).
+- Report asset regeneration completed successfully and manifest output now includes:
+  - `report/assets/tables/intel_claim_guardrail_review.md`
+- Generated `report/final_report.md` now references the explicit guardrail review artifact.
+- Generated `report/deliverable_gate.md` now lists guardrail review in final summary tables.
+
+### Guardrail Review Summary
+
+| Guardrail | Blocked unbounded claim | Bounded measured interpretation |
+| --- | --- | --- |
+| Latency | "Agrasandhani lowers latency overall" | In current Intel evidence, V4 has higher p95 latency than V0 on the clean qos0 run, so the valid claim is a latency-for-stability tradeoff. |
+| Reliability | "QoS1 improves reliability in general" | The current matrix observed `0` exact duplicate drops for qos1 and mixed latency shifts, which is setup-specific behavior, not a universal reliability conclusion. |
+| Network loss | "Agrasandhani reduces network loss" | Experiments use controlled impairment scenarios and application-level metrics; they do not directly measure reduced network-loss rates attributable to the gateway. |
+| Safer wording | "Universal improvements across all metrics" | Use bounded claims tied to evidence, such as reduced downstream frame cadence, explicit freshness-visibility tradeoffs, reduced redundant transmissions when measured, and graceful degradation under tested outage scenarios. |
+
+### Analysis
+
+This final task closes the M6 readiness gate by adding an explicit, auditable claim-boundary artifact instead of relying only on conservative prose scattered through the report. The new guardrail table makes it clear which claims are blocked, why they are blocked, and what safer alternatives are justified by measured outputs.
+
+The practical impact is that the paper now has a hard boundary against over-claiming. It can still present strong measured results where evidence is clear (for example frame-cadence reduction and outage visibility behavior), but it does not overstate wins on latency, reliability, or network loss where direct support is missing or definition-dependent. That improves methodological credibility and aligns the final write-up with the checklist's explicit M6 requirements.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain builder/test changes, regenerated tracked report assets, refreshed generated report docs, and this appended `report.md`.

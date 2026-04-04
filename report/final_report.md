@@ -30,6 +30,8 @@ The Intel qos0 versus qos1 comparison answers the next paper-readiness question 
 
 The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency p95, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
 
+The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
+
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted 116 downstream frames, while V4 emitted 5. At the same time, V4's aggregate envelopes pushed downstream bytes from 10605 in V0 to 15621 in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
 

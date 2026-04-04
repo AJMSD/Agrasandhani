@@ -68,6 +68,7 @@
     "report\\assets\\tables\\intel_outage_qos0_v0_vs_v4_freshness.md",
     "report\\assets\\tables\\aot_validation_summary.csv",
     "report\\assets\\tables\\intel_key_claims.md",
+    "report\\assets\\tables\\intel_claim_guardrail_review.md",
     "report\\assets\\tables\\intel_v2_batch_window_tradeoff.csv",
     "report\\assets\\tables\\intel_v2_batch_window_tradeoff.md",
     "report\\assets\\tables\\intel_v1_vs_v2_isolation.csv",

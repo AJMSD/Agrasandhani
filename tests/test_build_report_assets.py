@@ -79,6 +79,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").exists())
             self.assertTrue((output_dir / "tables" / "aot_validation_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_key_claims.md").exists())
+            self.assertTrue((output_dir / "tables" / "intel_claim_guardrail_review.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_clean_qos0_latency_cdf.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_bandwidth_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_message_rate_over_time.png").exists())
@@ -91,6 +92,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("did not drop below V0", key_claims)
             self.assertIn("age-of-information trace", key_claims)
             self.assertIn("retained 6 latest rows versus 6", key_claims)
+            guardrail_review = (output_dir / "tables" / "intel_claim_guardrail_review.md").read_text(encoding="utf-8")
+            self.assertIn("Do not claim lower latency unless measured", guardrail_review)
+            self.assertIn("Do not claim improved reliability unless reliability is defined", guardrail_review)
+            self.assertIn("Do not claim reduced network loss", guardrail_review)
+            self.assertIn("safe_wording", guardrail_review)
             bandwidth_table = (output_dir / "tables" / "intel_bandwidth_vs_v0.md").read_text(encoding="utf-8")
             self.assertIn("| clean | v2 | 9800 | 13800 | 40.8% |", bandwidth_table)
             qos_table = (output_dir / "tables" / "intel_qos_comparison.md").read_text(encoding="utf-8")
@@ -116,9 +122,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("intel_qos_comparison.csv", deliverable_gate)
             self.assertIn("intel_condensed_summary.csv", deliverable_gate)
             self.assertIn("intel_outage_qos0_v0_vs_v4_freshness.csv", deliverable_gate)
+            self.assertIn("intel_claim_guardrail_review.md", deliverable_gate)
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
             self.assertIn(str(output_dir / "tables" / "intel_condensed_summary.csv"), manifest["generated_tables"])
+            self.assertIn(str(output_dir / "tables" / "intel_claim_guardrail_review.md"), manifest["generated_tables"])
 
     def test_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:
