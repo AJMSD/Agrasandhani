@@ -111,3 +111,62 @@ The `1000 ms` point also introduced a non-zero stale fraction (`0.155556`), whic
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the runner change, the new tests, the regenerated tracked report assets, and this appended `report.md`.
+
+## MP6 Task 3 Session Report
+
+### Task Goal
+
+Isolate what `v2` adds beyond batching alone by running a controlled Intel `v1` versus `v2` comparison across `clean`, `bandwidth_200kbps`, and `outage_5s` at the same five fixed batch windows, then regenerate tracked report assets so the paper can answer the question directly.
+
+### What Was Changed
+
+- Added `experiments/run_v1_v2_isolation_sweep.py` to run the dedicated Intel `v1` versus `v2` isolation sweep.
+- Extended `experiments/build_report_assets.py` with optional `intel_v1_v2_sweep_dir` support and generated:
+  - `report/assets/tables/intel_v1_vs_v2_isolation.csv`
+  - `report/assets/tables/intel_v1_vs_v2_isolation.md`
+  - `report/assets/figures/intel_v1_vs_v2_isolation.png`
+- Updated generated outputs to include the new isolation evidence:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+  - `report/assets/tables/intel_key_claims.md`
+- Updated `report/reproducibility.md` with the local-only `v1` versus `v2` sweep command and the matching report-asset regeneration command.
+- Added and updated tests for the new runner and optional asset-builder path.
+- Updated the third M6 checklist item locally only.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_run_v1_v2_isolation_sweep.py tests/test_build_report_assets.py tests/test_run_sweep.py tests/test_run_batch_window_sweep.py
+python .\experiments\run_v1_v2_isolation_sweep.py --sweep-id intel-v1-v2-isolation-20260403 --data-file .\experiments\logs\generated_inputs\intel_lab_final_20260403.csv
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --output-dir .\report\assets
+python -m pytest tests/test_run_sweep.py tests/test_run_batch_window_sweep.py tests/test_run_v1_v2_isolation_sweep.py tests/test_build_report_assets.py
+```
+
+### Verification Results
+
+- The unit-test suite for the sweep plumbing and report builder passed before and after regenerating the tracked assets.
+- The real Intel isolation sweep completed successfully and wrote local logs under `experiments/logs/intel-v1-v2-isolation-20260403/`.
+- The tracked report package regenerated successfully with the new optional sweep input and now references the isolation table and figure.
+
+### Measured Intel V1 Versus V2 Outcome
+
+| Scenario | Bytes delta range (`v2` vs `v1`) | Frames delta range (`v2` vs `v1`) | Latency p95 delta range | Stale-fraction delta range |
+| --- | --- | --- | --- | --- |
+| `clean` | `-1.1%` to `0.0%` | `-6.2%` to `0.0%` | `-7.45 ms` to `+2.0 ms` | `-0.027778` to `0.0` |
+| `bandwidth_200kbps` | `0.0%` to `+6.9%` | `0.0%` to `+20.0%` | `-9.9 ms` to `+6.1 ms` | `0.0` to `+0.027778` |
+| `outage_5s` | `0.0%` | `0.0%` | `-10.0 ms` to `+14.0 ms` | `0.0` to `+0.025` |
+
+Additional raw-sweep observation: `duplicates_dropped`, `compacted_dropped`, and `value_dedup_dropped` were all `0` in every one of the `30` isolation runs.
+
+### Analysis
+
+This task produced a useful negative answer. On the current Intel qos0 slice, `v2` does not show a consistent benefit over `v1` once both are already using the same fixed batch window. Most scenario-window pairs were identical on downstream bytes and frame count, and the counters that would show actual duplicate or compaction drops remained zero across the entire sweep.
+
+The only measurable differences were small and mixed. Under `clean` at `50 ms`, `v2` reduced downstream frames from `16` to `15` and bytes from `14921` to `14751` (`-1.1%`). Under `bandwidth_200kbps` at `250 ms`, `v2` moved in the opposite direction, increasing frames from `5` to `6` and bytes from `13051` to `13958` (`+6.9%`). The outage runs were effectively identical on bytes and frames across all five windows.
+
+The paper-ready conclusion is therefore narrow and defensible: on this dataset and replay configuration, batching is doing almost all of the visible work, while `v2`'s extra compaction and exact-duplicate suppression do not materially change the outcome beyond batching alone. That is exactly the result the checklist needed, even though it is not a positive win for `v2`.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the new isolation runner, test updates, regenerated tracked report assets, the reproducibility update, and this appended `report.md`.

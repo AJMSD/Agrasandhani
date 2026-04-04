@@ -17,6 +17,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 REPORT_DIR = BASE_DIR / "report"
 INTEL_BANDWIDTH_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "outage_5s")
 INTEL_BATCH_WINDOW_SWEEP_WINDOWS = (50, 100, 250, 500, 1000)
+INTEL_V1_V2_ISOLATION_SCENARIOS = ("clean", "bandwidth_200kbps", "outage_5s")
+INTEL_V1_V2_ISOLATION_WINDOWS = (50, 100, 250, 500, 1000)
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -204,6 +206,111 @@ def _describe_batch_window_payload_shift(batch_rows: list[dict[str, object]]) ->
     )
 
 
+def _build_intel_v1_v2_isolation_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    filtered: dict[tuple[str, int, str], dict[str, object]] = {}
+    for row in rows:
+        variant = str(row.get("variant", ""))
+        scenario = str(row.get("scenario", ""))
+        if variant not in {"v1", "v2"} or scenario not in INTEL_V1_V2_ISOLATION_SCENARIOS:
+            continue
+        if int(row["mqtt_qos"]) != 0:
+            continue
+        batch_window_ms = int(row.get("effective_batch_window_ms", row.get("batch_window_ms", 0)))
+        if batch_window_ms <= 0:
+            continue
+        filtered[(scenario, batch_window_ms, variant)] = row
+
+    comparison_rows: list[dict[str, object]] = []
+    missing_pairs: list[str] = []
+    for scenario in INTEL_V1_V2_ISOLATION_SCENARIOS:
+        for batch_window_ms in INTEL_V1_V2_ISOLATION_WINDOWS:
+            v1_row = filtered.get((scenario, batch_window_ms, "v1"))
+            v2_row = filtered.get((scenario, batch_window_ms, "v2"))
+            if v1_row is None or v2_row is None:
+                missing_pairs.append(f"{scenario}@{batch_window_ms}ms")
+                continue
+            comparison_rows.append(
+                {
+                    "scenario": scenario,
+                    "batch_window_ms": batch_window_ms,
+                    "v1_latency_p95_ms": float(v1_row["latency_p95_ms"]),
+                    "v2_latency_p95_ms": float(v2_row["latency_p95_ms"]),
+                    "latency_p95_delta_ms": round(float(v2_row["latency_p95_ms"]) - float(v1_row["latency_p95_ms"]), 3),
+                    "v1_proxy_downstream_frames_out": int(v1_row["proxy_downstream_frames_out"]),
+                    "v2_proxy_downstream_frames_out": int(v2_row["proxy_downstream_frames_out"]),
+                    "downstream_frames_delta_pct": _format_delta(
+                        float(v1_row["proxy_downstream_frames_out"]),
+                        float(v2_row["proxy_downstream_frames_out"]),
+                    ),
+                    "v1_proxy_downstream_bytes_out": int(v1_row["proxy_downstream_bytes_out"]),
+                    "v2_proxy_downstream_bytes_out": int(v2_row["proxy_downstream_bytes_out"]),
+                    "downstream_bytes_delta_pct": _format_delta(
+                        float(v1_row["proxy_downstream_bytes_out"]),
+                        float(v2_row["proxy_downstream_bytes_out"]),
+                    ),
+                    "v1_max_bandwidth_bytes_per_s": int(v1_row["max_bandwidth_bytes_per_s"]),
+                    "v2_max_bandwidth_bytes_per_s": int(v2_row["max_bandwidth_bytes_per_s"]),
+                    "max_bandwidth_delta_pct": _format_delta(
+                        float(v1_row["max_bandwidth_bytes_per_s"]),
+                        float(v2_row["max_bandwidth_bytes_per_s"]),
+                    ),
+                    "v1_stale_fraction": float(v1_row.get("stale_fraction", 0.0)),
+                    "v2_stale_fraction": float(v2_row.get("stale_fraction", 0.0)),
+                    "stale_fraction_delta": round(
+                        float(v2_row.get("stale_fraction", 0.0)) - float(v1_row.get("stale_fraction", 0.0)),
+                        6,
+                    ),
+                    "v1_run_dir": str(v1_row["run_dir"]),
+                    "v2_run_dir": str(v2_row["run_dir"]),
+                }
+            )
+    if missing_pairs:
+        missing_list = ", ".join(missing_pairs)
+        raise ValueError(f"Missing Intel v1/v2 isolation rows for: {missing_list}")
+    return comparison_rows
+
+
+def _parse_percent_label(value: object) -> float:
+    text = str(value).strip()
+    if text == "n/a":
+        return 0.0
+    return float(text.removesuffix("%"))
+
+
+def _scenario_rows(rows: list[dict[str, object]], scenario: str) -> list[dict[str, object]]:
+    scenario_rows = [row for row in rows if row["scenario"] == scenario]
+    return sorted(scenario_rows, key=lambda candidate: int(candidate["batch_window_ms"]))
+
+
+def _format_range(values: list[float], *, suffix: str = "", decimals: int = 1) -> str:
+    if not values:
+        return "n/a"
+    minimum = min(values)
+    maximum = max(values)
+    value_format = f"{{:.{decimals}f}}"
+    if math.isclose(minimum, maximum):
+        return f"{value_format.format(minimum)}{suffix}"
+    return f"{value_format.format(minimum)}{suffix} to {value_format.format(maximum)}{suffix}"
+
+
+def _describe_v1_v2_isolation_scenario(rows: list[dict[str, object]], scenario: str) -> str:
+    scenario_rows = _scenario_rows(rows, scenario)
+    byte_deltas = [_parse_percent_label(row["downstream_bytes_delta_pct"]) for row in scenario_rows]
+    frame_deltas = [_parse_percent_label(row["downstream_frames_delta_pct"]) for row in scenario_rows]
+    latency_deltas = [float(row["latency_p95_delta_ms"]) for row in scenario_rows]
+    stale_deltas = [float(row["stale_fraction_delta"]) for row in scenario_rows]
+    description = (
+        f"Under {scenario}, V2 changed downstream bytes by {_format_range(byte_deltas, suffix='%', decimals=1)} "
+        f"and downstream frames by {_format_range(frame_deltas, suffix='%', decimals=1)} versus V1, "
+        f"while latency p95 shifted by {_format_range(latency_deltas, suffix=' ms', decimals=1)} across the shared 50-1000 ms windows."
+    )
+    if any(not math.isclose(delta, 0.0) for delta in stale_deltas):
+        description += f" Stale-fraction delta ranged from {_format_range(stale_deltas, decimals=3)}."
+    else:
+        description += " Stale fraction stayed identical across those windows."
+    return description
+
+
 def _plot_latency_cdf(rows: list[dict[str, object]], *, scenario: str, mqtt_qos: int, output_path: Path) -> None:
     figure = plt.figure(figsize=(8, 5))
     for variant in ("v0", "v2", "v4"):
@@ -289,6 +396,38 @@ def _plot_batch_window_tradeoff(rows: list[dict[str, object]], *, output_path: P
     plt.close(figure)
 
 
+def _plot_v1_v2_isolation(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    figure, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
+    scenario_styles = {
+        "clean": "tab:blue",
+        "bandwidth_200kbps": "tab:orange",
+        "outage_5s": "tab:green",
+    }
+
+    for scenario in INTEL_V1_V2_ISOLATION_SCENARIOS:
+        scenario_rows = _scenario_rows(rows, scenario)
+        batch_windows = [int(row["batch_window_ms"]) for row in scenario_rows]
+        byte_deltas = [_parse_percent_label(row["downstream_bytes_delta_pct"]) for row in scenario_rows]
+        frame_deltas = [_parse_percent_label(row["downstream_frames_delta_pct"]) for row in scenario_rows]
+        color = scenario_styles[scenario]
+        axes[0].plot(batch_windows, byte_deltas, marker="o", color=color, label=scenario)
+        axes[1].plot(batch_windows, frame_deltas, marker="s", color=color, label=scenario)
+
+    axes[0].set_title("V2 vs V1 bytes delta")
+    axes[0].set_ylabel("Downstream bytes delta (%)")
+    axes[1].set_title("V2 vs V1 frames delta")
+    axes[1].set_ylabel("Downstream frames delta (%)")
+    for axis in axes:
+        axis.set_xlabel("Batch window (ms)")
+        axis.set_xticks(list(INTEL_V1_V2_ISOLATION_WINDOWS))
+        axis.grid(True, axis="y", alpha=0.3)
+    axes[1].legend(loc="best")
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _load_demo_summary(demo_dir: Path, side: str) -> dict[str, int]:
     payload = _load_json(demo_dir / f"{side}_dashboard" / "dashboard_summary.json")
     summary = payload.get("summary", {})
@@ -315,6 +454,7 @@ def _build_key_claims(
     aot_rows: list[dict[str, object]],
     demo_dir: Path,
     intel_batch_rows: list[dict[str, object]] | None = None,
+    intel_v1_v2_rows: list[dict[str, object]] | None = None,
 ) -> str:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -376,6 +516,17 @@ def _build_key_claims(
                 f"Across the same sweep, {_describe_batch_window_payload_shift(intel_batch_rows)}."
             ),
         )
+    if intel_v1_v2_rows is not None:
+        lines.insert(
+            2,
+            (
+                "- Intel V1 versus V2 isolation sweep shows what compaction changes beyond batching alone: "
+                + " ".join(
+                    _describe_v1_v2_isolation_scenario(intel_v1_v2_rows, scenario)
+                    for scenario in INTEL_V1_V2_ISOLATION_SCENARIOS
+                )
+            ),
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -387,6 +538,7 @@ def _write_final_report(
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
+    intel_v1_v2_rows: list[dict[str, object]] | None = None,
 ) -> None:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
@@ -425,6 +577,10 @@ The explicit Intel qos0 bandwidth comparison answers the first paper question di
         report_text += f"""
 The Intel V2 batch-window sweep answers the second paper question directly. As the fixed batch window increased from {first_row['batch_window_ms']} ms to {last_row['batch_window_ms']} ms, latency p95 rose from {first_row['latency_p95_ms']} ms to {last_row['latency_p95_ms']} ms while max frame rate fell from {first_row['max_frame_rate_per_s']} to {last_row['max_frame_rate_per_s']}. Across the same sweep, {_describe_batch_window_payload_shift(intel_batch_rows)}. That means the current V2 tradeoff is primarily latency versus render cadence, with payload-byte movement reported as supporting context rather than the headline result. The paper-ready outputs for this task are [report/assets/tables/intel_v2_batch_window_tradeoff.md](assets/tables/intel_v2_batch_window_tradeoff.md) and [report/assets/figures/intel_v2_batch_window_tradeoff.png](assets/figures/intel_v2_batch_window_tradeoff.png).
 """
+    if intel_v1_v2_rows is not None:
+        report_text += f"""
+The Intel V1 versus V2 isolation sweep answers the third paper question directly. Here, V1 is batching alone and V2 is batching plus compaction and exact-duplicate suppression. {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'clean')} {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'bandwidth_200kbps')} {_describe_v1_v2_isolation_scenario(intel_v1_v2_rows, 'outage_5s')} This is the right framing for the paper: the measured effect of V2 beyond batching alone can be mixed across bytes, frames, and latency, so the report should describe the observed deltas rather than assume a universal win. The paper-ready outputs for this task are [report/assets/tables/intel_v1_vs_v2_isolation.md](assets/tables/intel_v1_vs_v2_isolation.md) and [report/assets/figures/intel_v1_vs_v2_isolation.png](assets/figures/intel_v1_vs_v2_isolation.png).
+"""
     report_text += f"""
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
@@ -457,12 +613,18 @@ def _write_deliverable_gate(
     demo_dir: Path,
     output_dir: Path,
     intel_batch_sweep_dir: Path | None = None,
+    intel_v1_v2_sweep_dir: Path | None = None,
 ) -> None:
     batch_sweep_line = ""
     batch_summary_tables = ""
     if intel_batch_sweep_dir is not None:
         batch_sweep_line = f"- Intel V2 batch-window sweep run id: `{intel_batch_sweep_dir.name}` at `{intel_batch_sweep_dir}`\n"
         batch_summary_tables = ", [report/assets/tables/intel_v2_batch_window_tradeoff.csv](assets/tables/intel_v2_batch_window_tradeoff.csv), [report/assets/tables/intel_v2_batch_window_tradeoff.md](assets/tables/intel_v2_batch_window_tradeoff.md), [report/assets/figures/intel_v2_batch_window_tradeoff.png](assets/figures/intel_v2_batch_window_tradeoff.png)"
+    isolation_sweep_line = ""
+    isolation_summary_tables = ""
+    if intel_v1_v2_sweep_dir is not None:
+        isolation_sweep_line = f"- Intel V1 versus V2 isolation sweep run id: `{intel_v1_v2_sweep_dir.name}` at `{intel_v1_v2_sweep_dir}`\n"
+        isolation_summary_tables = ", [report/assets/tables/intel_v1_vs_v2_isolation.csv](assets/tables/intel_v1_vs_v2_isolation.csv), [report/assets/tables/intel_v1_vs_v2_isolation.md](assets/tables/intel_v1_vs_v2_isolation.md), [report/assets/figures/intel_v1_vs_v2_isolation.png](assets/figures/intel_v1_vs_v2_isolation.png)"
     content = f"""# Deliverable Completion Gate
 
 ## M1-M3 System Path
@@ -476,8 +638,8 @@ def _write_deliverable_gate(
 - Intel primary sweep run id: `{intel_sweep_dir.name}` at `{intel_sweep_dir}`
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
-{batch_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+{batch_sweep_line}{isolation_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}{isolation_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -511,6 +673,7 @@ def build_report_assets(
     demo_dir: Path,
     output_dir: Path,
     intel_batch_sweep_dir: Path | None = None,
+    intel_v1_v2_sweep_dir: Path | None = None,
 ) -> dict[str, object]:
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
@@ -518,6 +681,11 @@ def build_report_assets(
     intel_batch_rows = (
         _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
         if intel_batch_sweep_dir is not None
+        else None
+    )
+    intel_v1_v2_rows = (
+        _build_intel_v1_v2_isolation_rows(_load_summary_rows(intel_v1_v2_sweep_dir))
+        if intel_v1_v2_sweep_dir is not None
         else None
     )
 
@@ -579,8 +747,35 @@ def build_report_assets(
                 "run_dir",
             ],
         )
+    if intel_v1_v2_rows is not None:
+        _write_csv(tables_dir / "intel_v1_vs_v2_isolation.csv", intel_v1_v2_rows)
+        _write_markdown_table(
+            tables_dir / "intel_v1_vs_v2_isolation.md",
+            intel_v1_v2_rows,
+            columns=[
+                "scenario",
+                "batch_window_ms",
+                "v1_latency_p95_ms",
+                "v2_latency_p95_ms",
+                "latency_p95_delta_ms",
+                "v1_proxy_downstream_frames_out",
+                "v2_proxy_downstream_frames_out",
+                "downstream_frames_delta_pct",
+                "v1_proxy_downstream_bytes_out",
+                "v2_proxy_downstream_bytes_out",
+                "downstream_bytes_delta_pct",
+                "v1_max_bandwidth_bytes_per_s",
+                "v2_max_bandwidth_bytes_per_s",
+                "max_bandwidth_delta_pct",
+                "v1_stale_fraction",
+                "v2_stale_fraction",
+                "stale_fraction_delta",
+                "v1_run_dir",
+                "v2_run_dir",
+            ],
+        )
     (tables_dir / "intel_key_claims.md").write_text(
-        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows),
+        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows, intel_v1_v2_rows),
         encoding="utf-8",
     )
 
@@ -613,6 +808,11 @@ def build_report_assets(
             intel_batch_rows,
             output_path=figures_dir / "intel_v2_batch_window_tradeoff.png",
         )
+    if intel_v1_v2_rows is not None:
+        _plot_v1_v2_isolation(
+            intel_v1_v2_rows,
+            output_path=figures_dir / "intel_v1_vs_v2_isolation.png",
+        )
     _copy_demo_artifacts(demo_dir, figures_dir)
 
     manifest = {
@@ -620,6 +820,7 @@ def build_report_assets(
         "aot_sweep_dir": str(aot_sweep_dir),
         "demo_dir": str(demo_dir),
         "intel_batch_sweep_dir": str(intel_batch_sweep_dir) if intel_batch_sweep_dir is not None else None,
+        "intel_v1_v2_sweep_dir": str(intel_v1_v2_sweep_dir) if intel_v1_v2_sweep_dir is not None else None,
         "intel_runs": [row["run_id"] for row in intel_rows],
         "aot_runs": [row["run_id"] for row in aot_rows],
         "generated_figures": [
@@ -646,6 +847,14 @@ def build_report_assets(
                 str(tables_dir / "intel_v2_batch_window_tradeoff.md"),
             ]
         )
+    if intel_v1_v2_rows is not None:
+        manifest["generated_figures"].append(str(figures_dir / "intel_v1_vs_v2_isolation.png"))
+        manifest["generated_tables"].extend(
+            [
+                str(tables_dir / "intel_v1_vs_v2_isolation.csv"),
+                str(tables_dir / "intel_v1_vs_v2_isolation.md"),
+            ]
+        )
     (output_dir / "evidence_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -656,6 +865,7 @@ def build_report_assets(
         intel_rows=intel_rows,
         aot_rows=aot_rows,
         intel_batch_rows=intel_batch_rows,
+        intel_v1_v2_rows=intel_v1_v2_rows,
     )
     _write_deliverable_gate(
         intel_sweep_dir=intel_sweep_dir,
@@ -663,6 +873,7 @@ def build_report_assets(
         demo_dir=demo_dir,
         output_dir=output_dir,
         intel_batch_sweep_dir=intel_batch_sweep_dir,
+        intel_v1_v2_sweep_dir=intel_v1_v2_sweep_dir,
     )
     return manifest
 
@@ -673,6 +884,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aot-sweep-dir", type=Path, required=True)
     parser.add_argument("--demo-dir", type=Path, required=True)
     parser.add_argument("--intel-batch-sweep-dir", type=Path)
+    parser.add_argument("--intel-v1-v2-sweep-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
@@ -685,6 +897,7 @@ def main() -> None:
         demo_dir=args.demo_dir,
         output_dir=args.output_dir,
         intel_batch_sweep_dir=args.intel_batch_sweep_dir,
+        intel_v1_v2_sweep_dir=args.intel_v1_v2_sweep_dir,
     )
     print(json.dumps(manifest, indent=2))
 

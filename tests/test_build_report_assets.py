@@ -168,6 +168,93 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("intel_v2_batch_window_tradeoff.csv", deliverable_gate)
             self.assertIn("intel-v2-batch-window-20260403", deliverable_gate)
 
+    def test_build_report_assets_writes_v1_v2_isolation_outputs_when_sweep_is_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            base_dir = Path(tmp_dir_name)
+            intel_sweep = base_dir / "final-intel-primary-20260403"
+            aot_sweep = base_dir / "final-aot-validation-20260403"
+            demo_dir = base_dir / "final-demo-20260403" / "demo"
+            isolation_sweep = base_dir / "intel-v1-v2-isolation-20260403"
+            output_dir = base_dir / "report-assets"
+
+            for variant, latency, frames, bytes_out in (("v0", 8, 118, 9800), ("v2", 200, 23, 13800), ("v4", 248, 19, 14900)):
+                self._create_intel_run(intel_sweep, variant, "clean", 0, latency_p95=latency, frames=frames, bytes_out=bytes_out)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 0, latency_p95=latency + 4, frames=frames - 5, bytes_out=bytes_out - 300)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 1, latency_p95=latency + 5, frames=frames - 5, bytes_out=bytes_out - 300)
+            for scenario in ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"):
+                for variant, latency, frames, bytes_out in (("v0", 10, 100, 9000), ("v2", 220, 24, 13000), ("v4", 245, 20, 14000)):
+                    for qos in (0, 1):
+                        self._create_intel_run(
+                            intel_sweep,
+                            variant,
+                            scenario,
+                            qos,
+                            latency_p95=latency,
+                            frames=frames,
+                            bytes_out=bytes_out,
+                        )
+
+            self._create_aot_run(aot_sweep, "v0", "clean", 0, latency_p95=12, frames=80, bytes_out=6200)
+            self._create_aot_run(aot_sweep, "v4", "clean", 0, latency_p95=230, frames=18, bytes_out=7100)
+            self._create_aot_run(aot_sweep, "v0", "outage_5s", 0, latency_p95=15, frames=40, bytes_out=4000)
+            self._create_aot_run(aot_sweep, "v4", "outage_5s", 0, latency_p95=240, frames=10, bytes_out=5000)
+
+            for scenario, scenario_offset in [("clean", 0), ("bandwidth_200kbps", 15), ("outage_5s", 30)]:
+                for batch_window_ms, v1_latency, v2_latency, v1_frames, v2_frames, v1_bytes, v2_bytes, v1_stale, v2_stale in [
+                    (50, 90, 80, 18, 10, 15100, 14000, 0.0, 0.0),
+                    (100, 140, 120, 14, 8, 14500, 13600, 0.0, 0.0),
+                    (250, 240, 210, 8, 5, 13600, 13000, 0.0, 0.0),
+                    (500, 430, 390, 6, 4, 13450, 12950, 0.0, 0.0),
+                    (1000, 910, 960, 5, 4, 13200, 13550, 0.05, 0.08),
+                ]:
+                    self._create_v1_v2_isolation_run(
+                        isolation_sweep,
+                        variant="v1",
+                        scenario=scenario,
+                        batch_window_ms=batch_window_ms,
+                        latency_p95=v1_latency + scenario_offset,
+                        frames=v1_frames,
+                        bytes_out=v1_bytes + scenario_offset * 10,
+                        stale_fraction=v1_stale,
+                    )
+                    self._create_v1_v2_isolation_run(
+                        isolation_sweep,
+                        variant="v2",
+                        scenario=scenario,
+                        batch_window_ms=batch_window_ms,
+                        latency_p95=v2_latency + scenario_offset,
+                        frames=v2_frames,
+                        bytes_out=v2_bytes + scenario_offset * 10,
+                        stale_fraction=v2_stale,
+                    )
+
+            self._create_demo_artifacts(demo_dir)
+
+            report_dir = base_dir / "report"
+            with patch("experiments.build_report_assets.REPORT_DIR", report_dir):
+                manifest = build_report_assets(
+                    intel_sweep_dir=intel_sweep,
+                    aot_sweep_dir=aot_sweep,
+                    demo_dir=demo_dir,
+                    output_dir=output_dir,
+                    intel_v1_v2_sweep_dir=isolation_sweep,
+                )
+
+            self.assertEqual(manifest["intel_v1_v2_sweep_dir"], str(isolation_sweep))
+            self.assertTrue((output_dir / "tables" / "intel_v1_vs_v2_isolation.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_v1_vs_v2_isolation.md").exists())
+            self.assertTrue((output_dir / "figures" / "intel_v1_vs_v2_isolation.png").exists())
+            isolation_table = (output_dir / "tables" / "intel_v1_vs_v2_isolation.md").read_text(encoding="utf-8")
+            self.assertIn("| clean | 50 | 90.0 | 80.0 | -10.0 | 18 | 10 | -44.4% | 15100 | 14000 | -7.3% |", isolation_table)
+            key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
+            self.assertIn("Intel V1 versus V2 isolation sweep shows what compaction changes beyond batching alone", key_claims)
+            final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn("The Intel V1 versus V2 isolation sweep answers the third paper question directly.", final_report)
+            self.assertIn("intel_v1_vs_v2_isolation.png", final_report)
+            deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_v1_vs_v2_isolation.csv", deliverable_gate)
+            self.assertIn("intel-v1-v2-isolation-20260403", deliverable_gate)
+
     def _create_intel_run(
         self,
         sweep_dir: Path,
@@ -281,6 +368,37 @@ class BuildReportAssetsTests(unittest.TestCase):
             "max_bandwidth_bytes_per_s": bytes_out // 10,
             "max_frame_rate_per_s": max_frame_rate_per_s,
             "stale_fraction": 0.0,
+            "effective_batch_window_ms": batch_window_ms,
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    def _create_v1_v2_isolation_run(
+        self,
+        sweep_dir: Path,
+        *,
+        variant: str,
+        scenario: str,
+        batch_window_ms: int,
+        latency_p95: int,
+        frames: int,
+        bytes_out: int,
+        stale_fraction: float,
+    ) -> None:
+        run_dir = sweep_dir / f"{variant}-qos0-{scenario}-bw{batch_window_ms}ms"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "run_id": run_dir.name,
+            "variant": variant,
+            "scenario": scenario,
+            "mqtt_qos": 0,
+            "latency_mean_ms": latency_p95 - 20,
+            "latency_p95_ms": latency_p95,
+            "latency_p99_ms": latency_p95 + 20,
+            "proxy_downstream_frames_out": frames,
+            "proxy_downstream_bytes_out": bytes_out,
+            "max_bandwidth_bytes_per_s": bytes_out // 10,
+            "max_frame_rate_per_s": max(1, frames // 2),
+            "stale_fraction": stale_fraction,
             "effective_batch_window_ms": batch_window_ms,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")

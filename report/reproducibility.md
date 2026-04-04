@@ -71,6 +71,18 @@ python .\experiments\run_batch_window_sweep.py `
 
 This produces local-only logs under `experiments/logs/intel-v2-batch-window-20260403/` for the canonical `50,100,250,500,1000 ms` windows.
 
+## M6 V1 vs V2 Isolation Sweep
+
+If the normalized Intel replay CSV already exists locally, run the dedicated V1-versus-V2 isolation sweep:
+
+```powershell
+python .\experiments\run_v1_v2_isolation_sweep.py `
+  --sweep-id intel-v1-v2-isolation-20260403 `
+  --data-file .\experiments\logs\generated_inputs\intel_lab_final_20260403.csv
+```
+
+This produces local-only logs under `experiments/logs/intel-v1-v2-isolation-20260403/` for `v1` and `v2` across `clean`, `bandwidth_200kbps`, and `outage_5s` at the canonical `50,100,250,500,1000 ms` windows.
+
 ## Local-Only Outputs
 
 - `experiments/logs/final-deliverables-<STAMP>/manifest.json`
@@ -82,6 +94,7 @@ This produces local-only logs under `experiments/logs/intel-v2-batch-window-2026
 - `experiments/logs/final-aot-validation-<STAMP>/`
 - `experiments/logs/final-demo-<STAMP>/demo/`
 - `experiments/logs/intel-v2-batch-window-<STAMP>/`
+- `experiments/logs/intel-v1-v2-isolation-<STAMP>/`
 
 These remain ignored and should not be committed.
 
@@ -104,6 +117,7 @@ python .\experiments\build_report_assets.py `
   --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 `
   --demo-dir .\experiments\logs\final-demo-20260403\demo `
   --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 `
+  --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 `
   --output-dir .\report\assets
 ```
 
