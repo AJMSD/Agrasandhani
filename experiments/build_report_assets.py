@@ -20,6 +20,11 @@ INTEL_BATCH_WINDOW_SWEEP_WINDOWS = (50, 100, 250, 500, 1000)
 INTEL_V1_V2_ISOLATION_SCENARIOS = ("clean", "bandwidth_200kbps", "outage_5s")
 INTEL_V1_V2_ISOLATION_WINDOWS = (50, 100, 250, 500, 1000)
 INTEL_ADAPTIVE_SCENARIOS = ("bandwidth_200kbps", "loss_2pct")
+OUTAGE_PHASE_WINDOWS: tuple[tuple[str, float, float | None], ...] = (
+    ("steady-before-outage", 0.0, 10.0),
+    ("outage", 10.0, 15.0),
+    ("recovery", 15.0, None),
+)
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -38,6 +43,19 @@ def _load_summary_rows(sweep_dir: Path) -> list[dict[str, object]]:
         payload["run_dir"] = str(summary_path.parent)
         rows.append(payload)
     return rows
+
+
+def _percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = (len(ordered) - 1) * pct
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return float(ordered[lower])
+    weight = index - lower
+    return float(ordered[lower] * (1 - weight) + ordered[upper] * weight)
 
 
 def _select_row(
@@ -68,6 +86,145 @@ def _load_timeseries(run_dir: Path) -> list[dict[str, float]]:
     for row in _load_csv(csv_path):
         rows.append({key: float(value) for key, value in row.items()})
     return rows
+
+
+def _load_dashboard_summary(run_dir: Path) -> dict[str, int]:
+    payload_path = run_dir / "dashboard_summary.json"
+    if not payload_path.exists():
+        return {
+            "latestRowCount": 0,
+            "messageCount": 0,
+            "frameCount": 0,
+            "staleCount": 0,
+        }
+    payload = _load_json(payload_path)
+    summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
+    return {
+        "latestRowCount": int(summary.get("latestRowCount", 0)),
+        "messageCount": int(summary.get("messageCount", 0)),
+        "frameCount": int(summary.get("frameCount", 0)),
+        "staleCount": int(summary.get("staleCount", 0)),
+    }
+
+
+def _load_measurement_rows(run_dir: Path) -> list[dict[str, float | int]]:
+    csv_path = run_dir / "dashboard_measurements.csv"
+    if not csv_path.exists():
+        return []
+    rows: list[dict[str, float | int]] = []
+    for index, row in enumerate(_load_csv(csv_path), start=1):
+        age_text = row.get("age_ms_at_display", "")
+        if age_text == "":
+            continue
+        frame_index_text = row.get("frame_index", "")
+        ts_displayed_text = row.get("ts_displayed", "")
+        frame_index = int(frame_index_text) if frame_index_text else index
+        ts_displayed_ms = int(ts_displayed_text) if ts_displayed_text else index * 1000
+        rows.append(
+            {
+                "frame_index": frame_index,
+                "ts_displayed_ms": ts_displayed_ms,
+                "age_ms": float(age_text),
+            }
+        )
+    return rows
+
+
+def _load_proxy_anchor_ms(run_dir: Path) -> int | None:
+    csv_path = run_dir / "proxy_frame_log.csv"
+    if not csv_path.exists():
+        return None
+    anchors = [
+        int(row["upstream_received_ms"])
+        for row in _load_csv(csv_path)
+        if row.get("upstream_received_ms", "")
+    ]
+    if not anchors:
+        return None
+    return min(anchors)
+
+
+def _phase_for_second(relative_second: float) -> str:
+    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
+        if end_s is None and relative_second >= start_s:
+            return phase_name
+        if end_s is not None and start_s <= relative_second < end_s:
+            return phase_name
+    return OUTAGE_PHASE_WINDOWS[-1][0]
+
+
+def _format_stat_value(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return str(round(value, 3))
+
+
+def _build_frame_age_trace(run_dir: Path) -> list[dict[str, float | int]]:
+    grouped_rows: dict[int, list[dict[str, float | int]]] = {}
+    for row in _load_measurement_rows(run_dir):
+        grouped_rows.setdefault(int(row["frame_index"]), []).append(row)
+
+    frame_trace: list[dict[str, float | int]] = []
+    for frame_index in sorted(grouped_rows):
+        group = grouped_rows[frame_index]
+        frame_trace.append(
+            {
+                "frame_index": frame_index,
+                "ts_displayed_ms": int(group[0]["ts_displayed_ms"]),
+                "age_mean_ms": round(mean(float(row["age_ms"]) for row in group), 3),
+                "rendered_updates": len(group),
+            }
+        )
+    return frame_trace
+
+
+def _relative_second_values(
+    rows: list[dict[str, float | int]],
+    *,
+    time_field: str,
+    anchor_ms: int | None,
+) -> list[float]:
+    if not rows:
+        return []
+    effective_anchor_ms = anchor_ms
+    if effective_anchor_ms is None:
+        effective_anchor_ms = min(int(row[time_field]) for row in rows)
+    return [round((int(row[time_field]) - effective_anchor_ms) / 1000, 3) for row in rows]
+
+
+def _build_intel_outage_freshness_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    freshness_rows: list[dict[str, object]] = []
+    for variant in ("v0", "v4"):
+        row = _select_row(intel_rows, variant=variant, scenario="outage_5s", mqtt_qos=0)
+        run_dir = Path(str(row["run_dir"]))
+        measurement_rows = _load_measurement_rows(run_dir)
+        anchor_ms = _load_proxy_anchor_ms(run_dir)
+        relative_seconds = _relative_second_values(measurement_rows, time_field="ts_displayed_ms", anchor_ms=anchor_ms)
+        phase_ages: dict[str, list[float]] = {phase_name: [] for phase_name, _, _ in OUTAGE_PHASE_WINDOWS}
+        phase_counts: dict[str, int] = {phase_name: 0 for phase_name, _, _ in OUTAGE_PHASE_WINDOWS}
+        for measurement_row, relative_second in zip(measurement_rows, relative_seconds, strict=False):
+            phase_name = _phase_for_second(relative_second)
+            phase_ages[phase_name].append(float(measurement_row["age_ms"]))
+            phase_counts[phase_name] += 1
+
+        dashboard_summary = _load_dashboard_summary(run_dir)
+        freshness_rows.append(
+            {
+                "variant": variant,
+                "pre_outage_rendered_updates": phase_counts["steady-before-outage"],
+                "pre_outage_age_mean_ms": _format_stat_value(mean(phase_ages["steady-before-outage"]) if phase_ages["steady-before-outage"] else None),
+                "pre_outage_age_p95_ms": _format_stat_value(_percentile(phase_ages["steady-before-outage"], 0.95)),
+                "outage_rendered_updates": phase_counts["outage"],
+                "recovery_rendered_updates": phase_counts["recovery"],
+                "recovery_age_mean_ms": _format_stat_value(mean(phase_ages["recovery"]) if phase_ages["recovery"] else None),
+                "recovery_age_p95_ms": _format_stat_value(_percentile(phase_ages["recovery"], 0.95)),
+                "recovery_age_max_ms": _format_stat_value(max(phase_ages["recovery"]) if phase_ages["recovery"] else None),
+                "end_state_stale_count": dashboard_summary["staleCount"],
+                "end_state_latest_row_count": dashboard_summary["latestRowCount"],
+                "run_dir": str(run_dir),
+            }
+        )
+    return freshness_rows
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
@@ -509,6 +666,52 @@ def _plot_timeseries(
     plt.close(figure)
 
 
+def _plot_outage_age_over_time(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    figure, axis = plt.subplots(figsize=(10, 5))
+    variant_styles = {
+        "v0": ("tab:blue", "V0"),
+        "v4": ("tab:red", "V4"),
+    }
+    max_relative_second = 0.0
+
+    for variant in ("v0", "v4"):
+        row = _select_row(rows, variant=variant, scenario="outage_5s", mqtt_qos=0)
+        run_dir = Path(str(row["run_dir"]))
+        frame_trace = _build_frame_age_trace(run_dir)
+        anchor_ms = _load_proxy_anchor_ms(run_dir)
+        x_values = _relative_second_values(frame_trace, time_field="ts_displayed_ms", anchor_ms=anchor_ms)
+        y_values = [float(point["age_mean_ms"]) for point in frame_trace]
+        if not x_values or not y_values:
+            continue
+        max_relative_second = max(max_relative_second, max(x_values))
+        color, label = variant_styles[variant]
+        axis.plot(x_values, y_values, marker="o", color=color, label=label)
+
+    phase_colors = {
+        "steady-before-outage": "#d9edf7",
+        "outage": "#f2dede",
+        "recovery": "#dff0d8",
+    }
+    phase_end = max_relative_second if max_relative_second > 0 else 15.0
+    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
+        clipped_end_s = phase_end if end_s is None else min(end_s, phase_end)
+        if clipped_end_s <= start_s:
+            continue
+        axis.axvspan(start_s, clipped_end_s, color=phase_colors[phase_name], alpha=0.2)
+    axis.axvline(10.0, color="0.4", linestyle="--", linewidth=1)
+    axis.axvline(15.0, color="0.4", linestyle="--", linewidth=1)
+
+    axis.set_xlabel("Relative second from first proxy upstream receive")
+    axis.set_ylabel("Frame mean age at display (ms)")
+    axis.set_title("Intel outage qos0 V0 vs V4 age over time")
+    axis.grid(True, axis="y", alpha=0.3)
+    axis.legend(loc="best")
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _plot_batch_window_tradeoff(rows: list[dict[str, object]], *, output_path: Path) -> None:
     batch_windows = [row["batch_window_ms"] for row in rows]
     latency_values = [row["latency_p95_ms"] for row in rows]
@@ -636,6 +839,24 @@ def _plot_adaptive_impairment(rows: list[dict[str, object]], *, output_path: Pat
     plt.close(figure)
 
 
+def _describe_outage_freshness(rows: list[dict[str, object]]) -> str:
+    v0_row = next(row for row in rows if row["variant"] == "v0")
+    v4_row = next(row for row in rows if row["variant"] == "v4")
+    return (
+        f"On the Intel qos0 outage age trace, V0 rendered {v0_row['pre_outage_rendered_updates']} pre-outage updates "
+        f"with pre-outage p95 age {v0_row['pre_outage_age_p95_ms']} ms, while V4 rendered {v4_row['pre_outage_rendered_updates']} "
+        f"pre-outage updates with pre-outage p95 age {v4_row['pre_outage_age_p95_ms']} ms. "
+        f"During the five-second outage, rendered updates dropped to {v0_row['outage_rendered_updates']} for V0 and "
+        f"{v4_row['outage_rendered_updates']} for V4. In recovery, V0 rendered {v0_row['recovery_rendered_updates']} updates "
+        f"with recovery p95 age {v0_row['recovery_age_p95_ms']} ms, while V4 rendered {v4_row['recovery_rendered_updates']} "
+        f"updates with recovery p95 age {v4_row['recovery_age_p95_ms']} ms. End-state staleCount/latestRowCount were "
+        f"{v0_row['end_state_stale_count']}/{v0_row['end_state_latest_row_count']} for V0 and "
+        f"{v4_row['end_state_stale_count']}/{v4_row['end_state_latest_row_count']} for V4. "
+        "The measured effect is a visibility tradeoff rather than a lower-age result: V4 keeps a larger "
+        "last-known-good state visible, but the visible data is older."
+    )
+
+
 def _load_demo_summary(demo_dir: Path, side: str) -> dict[str, int]:
     payload = _load_json(demo_dir / f"{side}_dashboard" / "dashboard_summary.json")
     summary = payload.get("summary", {})
@@ -661,6 +882,7 @@ def _build_key_claims(
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
     demo_dir: Path,
+    intel_outage_freshness_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
@@ -698,6 +920,10 @@ def _build_key_claims(
             f"to {outage_v4['proxy_downstream_bytes_out']} in V4 "
             f"({ _format_delta(float(outage_v0['proxy_downstream_bytes_out']), float(outage_v4['proxy_downstream_bytes_out'])) } vs V0), "
             "which captures the tradeoff between fewer frames and larger aggregate envelopes."
+        ),
+        (
+            "- Intel qos0 outage freshness is now shown with an age-of-information trace rather than a stale-fraction time series: "
+            + _describe_outage_freshness(intel_outage_freshness_rows)
         ),
         (
             f"- Intel qos1 runs saw {qos1_duplicates} duplicate drops across the primary sweep while averaging "
@@ -757,6 +983,7 @@ def _write_final_report(
     demo_dir: Path,
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
+    intel_outage_freshness_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
@@ -807,6 +1034,9 @@ The Intel V1 versus V2 isolation sweep answers the third paper question directly
 The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper question directly. Here, V2 is fixed-window batching and V3 is adaptive batching under the same base `250 ms` configuration. {_describe_adaptive_scenario(intel_adaptive_rows, 'bandwidth_200kbps')} {_describe_adaptive_scenario(intel_adaptive_rows, 'loss_2pct')} This is the right framing for the paper: the adaptive claim should be limited to the measured stale-fraction, cadence, and window-trace changes under these impairments, not generalized into a broader backlog or reliability claim. The paper-ready outputs for this task are [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md) and [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png).
 """
     report_text += f"""
+The Intel qos0 outage freshness trace answers the fifth paper question directly. For this task, the paper-ready freshness signal is age-of-information over time rather than stale-fraction over time, because the current dashboard export records age only on rendered updates and does not sample idle stale transitions between renders. {_describe_outage_freshness(intel_outage_freshness_rows)} The end-state `staleCount` and `latestRowCount` values remain useful supporting context, but the primary evidence is the age trace in [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png) together with the compact summary table [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md).
+"""
+    report_text += f"""
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
 
@@ -841,6 +1071,7 @@ def _write_deliverable_gate(
     intel_v1_v2_sweep_dir: Path | None = None,
     intel_adaptive_sweep_dir: Path | None = None,
 ) -> None:
+    freshness_summary_tables = ", [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv), [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md), [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png)"
     batch_sweep_line = ""
     batch_summary_tables = ""
     if intel_batch_sweep_dir is not None:
@@ -870,7 +1101,7 @@ def _write_deliverable_gate(
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
 {batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -910,6 +1141,7 @@ def build_report_assets(
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    intel_outage_freshness_rows = _build_intel_outage_freshness_rows(intel_rows)
     intel_batch_rows = (
         _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
         if intel_batch_sweep_dir is not None
@@ -935,6 +1167,7 @@ def build_report_assets(
     _write_csv(tables_dir / "intel_primary_run_summary.csv", intel_rows)
     _write_csv(tables_dir / "aot_validation_summary.csv", aot_rows)
     _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
+    _write_csv(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv", intel_outage_freshness_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
         intel_rows,
@@ -947,6 +1180,24 @@ def build_report_assets(
             "proxy_downstream_frames_out",
             "proxy_downstream_bytes_out",
             "dashboard_stale_count",
+        ],
+    )
+    _write_markdown_table(
+        tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md",
+        intel_outage_freshness_rows,
+        columns=[
+            "variant",
+            "pre_outage_rendered_updates",
+            "pre_outage_age_mean_ms",
+            "pre_outage_age_p95_ms",
+            "outage_rendered_updates",
+            "recovery_rendered_updates",
+            "recovery_age_mean_ms",
+            "recovery_age_p95_ms",
+            "recovery_age_max_ms",
+            "end_state_stale_count",
+            "end_state_latest_row_count",
+            "run_dir",
         ],
     )
     _write_markdown_table(
@@ -1045,7 +1296,15 @@ def build_report_assets(
             ],
         )
     (tables_dir / "intel_key_claims.md").write_text(
-        _build_key_claims(intel_rows, aot_rows, demo_dir, intel_batch_rows, intel_v1_v2_rows, intel_adaptive_rows),
+        _build_key_claims(
+            intel_rows,
+            aot_rows,
+            demo_dir,
+            intel_outage_freshness_rows,
+            intel_batch_rows,
+            intel_v1_v2_rows,
+            intel_adaptive_rows,
+        ),
         encoding="utf-8",
     )
 
@@ -1072,6 +1331,10 @@ def build_report_assets(
         title="Intel outage qos1 message rate over time",
         ylabel="Rendered updates per second",
         output_path=figures_dir / "intel_outage_qos1_message_rate_over_time.png",
+    )
+    _plot_outage_age_over_time(
+        intel_rows,
+        output_path=figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png",
     )
     if intel_batch_rows is not None:
         _plot_batch_window_tradeoff(
@@ -1103,6 +1366,7 @@ def build_report_assets(
             str(figures_dir / "intel_clean_qos0_latency_cdf.png"),
             str(figures_dir / "intel_outage_qos1_bandwidth_over_time.png"),
             str(figures_dir / "intel_outage_qos1_message_rate_over_time.png"),
+            str(figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png"),
             str(figures_dir / "final_demo_compare.png"),
             str(figures_dir / "final_demo_baseline_dashboard.png"),
             str(figures_dir / "final_demo_smart_dashboard.png"),
@@ -1111,6 +1375,8 @@ def build_report_assets(
             str(tables_dir / "intel_primary_run_summary.csv"),
             str(tables_dir / "intel_bandwidth_vs_v0.csv"),
             str(tables_dir / "intel_bandwidth_vs_v0.md"),
+            str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv"),
+            str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
             str(tables_dir / "aot_validation_summary.csv"),
             str(tables_dir / "intel_key_claims.md"),
         ],
@@ -1148,6 +1414,7 @@ def build_report_assets(
         demo_dir=demo_dir,
         intel_rows=intel_rows,
         aot_rows=aot_rows,
+        intel_outage_freshness_rows=intel_outage_freshness_rows,
         intel_batch_rows=intel_batch_rows,
         intel_v1_v2_rows=intel_v1_v2_rows,
         intel_adaptive_rows=intel_adaptive_rows,

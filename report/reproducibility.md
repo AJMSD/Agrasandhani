@@ -95,6 +95,10 @@ python .\experiments\run_adaptive_impairment_sweep.py `
 
 This produces local-only logs under `experiments/logs/intel-v2-v3-adaptive-20260404/` for `v2` and `v3` across `bandwidth_200kbps` and `loss_2pct` using the default adaptive gateway settings and a base `250 ms` batch window.
 
+## M6 Freshness Trace
+
+No separate local-only sweep is required for the LKG plus TTL freshness task. The `v0` versus `v4` outage age-of-information trace is regenerated directly from the existing Intel primary sweep runs `v0-qos0-outage_5s` and `v4-qos0-outage_5s` inside `final-intel-primary-20260403` whenever `experiments/build_report_assets.py` is run.
+
 ## Local-Only Outputs
 
 - `experiments/logs/final-deliverables-<STAMP>/manifest.json`
@@ -134,6 +138,8 @@ python .\experiments\build_report_assets.py `
   --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 `
   --output-dir .\report\assets
 ```
+
+That command also regenerates the outage freshness artifacts `report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png` and `report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.{csv,md}` from the Intel primary sweep.
 
 ## Verification
 

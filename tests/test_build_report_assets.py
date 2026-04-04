@@ -71,27 +71,86 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_primary_run_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.md").exists())
+            self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").exists())
             self.assertTrue((output_dir / "tables" / "aot_validation_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_key_claims.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_clean_qos0_latency_cdf.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_bandwidth_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_message_rate_over_time.png").exists())
+            self.assertTrue((output_dir / "figures" / "intel_outage_qos0_v0_vs_v4_age_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "final_demo_compare.png").exists())
             self.assertTrue((report_dir / "final_report.md").exists())
             self.assertTrue((report_dir / "deliverable_gate.md").exists())
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("did not drop below V0", key_claims)
+            self.assertIn("age-of-information trace", key_claims)
             self.assertIn("retained 6 latest rows versus 6", key_claims)
             bandwidth_table = (output_dir / "tables" / "intel_bandwidth_vs_v0.md").read_text(encoding="utf-8")
             self.assertIn("| clean | v2 | 9800 | 13800 | 40.8% |", bandwidth_table)
+            freshness_table = (output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").read_text(encoding="utf-8")
+            self.assertIn("| v0 |", freshness_table)
+            self.assertIn("| v4 |", freshness_table)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
             self.assertIn("did not show a downstream payload-byte reduction versus V0", final_report)
             self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)
+            self.assertIn("The Intel qos0 outage freshness trace answers the fifth paper question directly.", final_report)
             self.assertIn("AoT provides a smaller portability check", final_report)
             deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
             self.assertIn("intel_bandwidth_vs_v0.csv", deliverable_gate)
+            self.assertIn("intel_outage_qos0_v0_vs_v4_freshness.csv", deliverable_gate)
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
+
+    def test_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            base_dir = Path(tmp_dir_name)
+            intel_sweep = base_dir / "final-intel-primary-20260403"
+            aot_sweep = base_dir / "final-aot-validation-20260403"
+            demo_dir = base_dir / "final-demo-20260403" / "demo"
+            output_dir = base_dir / "report-assets"
+
+            for variant, latency, frames, bytes_out in (("v0", 8, 118, 9800), ("v2", 200, 23, 13800), ("v4", 248, 19, 14900)):
+                self._create_intel_run(intel_sweep, variant, "clean", 0, latency_p95=latency, frames=frames, bytes_out=bytes_out)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 0, latency_p95=latency + 4, frames=frames - 5, bytes_out=bytes_out - 300)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 1, latency_p95=latency + 5, frames=frames - 5, bytes_out=bytes_out - 300)
+            for scenario in ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"):
+                for variant, latency, frames, bytes_out in (("v0", 10, 100, 9000), ("v2", 220, 24, 13000), ("v4", 245, 20, 14000)):
+                    for qos in (0, 1):
+                        self._create_intel_run(
+                            intel_sweep,
+                            variant,
+                            scenario,
+                            qos,
+                            latency_p95=latency,
+                            frames=frames,
+                            bytes_out=bytes_out,
+                        )
+
+            self._create_aot_run(aot_sweep, "v0", "clean", 0, latency_p95=12, frames=80, bytes_out=6200)
+            self._create_aot_run(aot_sweep, "v4", "clean", 0, latency_p95=230, frames=18, bytes_out=7100)
+            self._create_aot_run(aot_sweep, "v0", "outage_5s", 0, latency_p95=15, frames=40, bytes_out=4000)
+            self._create_aot_run(aot_sweep, "v4", "outage_5s", 0, latency_p95=240, frames=10, bytes_out=5000)
+            self._create_demo_artifacts(demo_dir)
+
+            report_dir = base_dir / "report"
+            with patch("experiments.build_report_assets.REPORT_DIR", report_dir):
+                manifest = build_report_assets(
+                    intel_sweep_dir=intel_sweep,
+                    aot_sweep_dir=aot_sweep,
+                    demo_dir=demo_dir,
+                    output_dir=output_dir,
+                )
+
+            self.assertIn(str(output_dir / "figures" / "intel_outage_qos0_v0_vs_v4_age_over_time.png"), manifest["generated_figures"])
+            self.assertIn(str(output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.csv"), manifest["generated_tables"])
+            freshness_table = (output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").read_text(encoding="utf-8")
+            self.assertIn("| v0 | 1 | 2.0 | 2.0 | 1 | 1 | 28.0 | 28.0 | 28.0 | 6 | 6 |", freshness_table)
+            self.assertIn("| v4 | 1 | 242.0 | 242.0 | 1 | 1 | 268.0 | 268.0 | 268.0 | 6 | 6 |", freshness_table)
+            final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn("age-of-information over time rather than stale-fraction over time", final_report)
+            deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_outage_qos0_v0_vs_v4_age_over_time.png", deliverable_gate)
 
     def test_build_report_assets_writes_batch_window_tradeoff_outputs_when_batch_sweep_is_provided(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:
@@ -411,7 +470,26 @@ class BuildReportAssetsTests(unittest.TestCase):
             "dashboard_frame_count": frames,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-        self._write_dashboard_measurements(run_dir / "dashboard_measurements.csv", [latency_p95 - 10, latency_p95, latency_p95 + 10])
+        self._write_dashboard_measurements(
+            run_dir / "dashboard_measurements.csv",
+            [max(0, latency_p95 - 10), latency_p95, latency_p95 + 16],
+            display_times_ms=[3000, 13000, 20000],
+            gateway_mode=variant,
+        )
+        (run_dir / "dashboard_summary.json").write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "latestRowCount": 6,
+                        "messageCount": 150,
+                        "frameCount": frames,
+                        "staleCount": 6 if "outage" in scenario else 0,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._write_proxy_frame_log(run_dir / "proxy_frame_log.csv")
         self._write_timeseries(run_dir / "timeseries.csv")
 
     def _create_aot_run(
@@ -447,7 +525,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             "dashboard_frame_count": frames,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-        self._write_dashboard_measurements(run_dir / "dashboard_measurements.csv", [latency_p95 - 5, latency_p95, latency_p95 + 5])
+        self._write_dashboard_measurements(
+            run_dir / "dashboard_measurements.csv",
+            [latency_p95 - 5, latency_p95, latency_p95 + 5],
+            gateway_mode=variant,
+        )
         self._write_timeseries(run_dir / "timeseries.csv")
 
     def _create_demo_artifacts(self, demo_dir: Path) -> None:
@@ -577,12 +659,46 @@ class BuildReportAssetsTests(unittest.TestCase):
         self._write_gateway_forward_log(run_dir / "gateway_forward_log.csv", effective_windows, adaptation_reasons)
         self._write_timeseries_with_update_rates(run_dir / "timeseries.csv", update_rates)
 
-    def _write_dashboard_measurements(self, path: Path, latencies: list[int]) -> None:
+    def _write_dashboard_measurements(
+        self,
+        path: Path,
+        latencies: list[int],
+        *,
+        display_times_ms: list[int] | None = None,
+        gateway_mode: str = "v0",
+    ) -> None:
+        display_times = display_times_ms or [1000 * index for index in range(1, len(latencies) + 1)]
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["age_ms_at_display"])
-            for latency in latencies:
-                writer.writerow([latency])
+            writer.writerow(
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ]
+            )
+            for index, (latency, ts_displayed_ms) in enumerate(zip(latencies, display_times, strict=True), start=1):
+                writer.writerow(
+                    [
+                        str(index),
+                        str(index),
+                        gateway_mode,
+                        "sensor-1",
+                        "temperature",
+                        f"msg-{index}",
+                        str(ts_displayed_ms - latency),
+                        str(ts_displayed_ms),
+                        str(latency),
+                        "false",
+                    ]
+                )
 
     def _write_timeseries(self, path: Path) -> None:
         with path.open("w", encoding="utf-8", newline="") as handle:
@@ -597,6 +713,28 @@ class BuildReportAssetsTests(unittest.TestCase):
             writer.writerow(["epoch_second", "bandwidth_bytes_per_s", "frame_rate_per_s", "update_rate_per_s"])
             for index, rate in enumerate(update_rates, start=1):
                 writer.writerow([str(index), str(1000 + index * 100), "4", str(rate)])
+
+    def _write_proxy_frame_log(self, path: Path) -> None:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                [
+                    "timestamp",
+                    "session_id",
+                    "phase_name",
+                    "event",
+                    "payload_bytes",
+                    "scheduled_delay_ms",
+                    "bandwidth_wait_ms",
+                    "total_wait_ms",
+                    "outage",
+                    "upstream_received_ms",
+                    "downstream_sent_ms",
+                ]
+            )
+            writer.writerow(["2026-04-04T00:00:00Z", "1", "steady-before-outage", "sent", "1000", "0", "0", "0", "False", "1000", "1000"])
+            writer.writerow(["2026-04-04T00:00:10Z", "1", "outage", "dropped", "1000", "0", "0", "0", "True", "11000", ""])
+            writer.writerow(["2026-04-04T00:00:18Z", "1", "recovery", "sent", "1000", "0", "0", "0", "False", "18000", "18000"])
 
     def _write_gateway_forward_log(self, path: Path, effective_windows: list[int], adaptation_reasons: list[str]) -> None:
         with path.open("w", encoding="utf-8", newline="") as handle:

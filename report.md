@@ -228,3 +228,57 @@ This also keeps the scope correct for M6. There is no need to add new backlog in
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the new adaptive runner, sweep-plumbing update, regenerated tracked report assets, the reproducibility update, and this appended `report.md`.
+
+## MP6 Task 5 Session Report
+
+### Task Goal
+
+Show the LKG plus TTL effect on freshness perception with a paper-ready Intel outage artifact, using the existing `final-intel-primary-20260403` outage runs instead of adding new gateway behavior or a separate sweep.
+
+### What Was Changed
+
+- Extended `experiments/build_report_assets.py` to derive a default outage freshness artifact from the existing Intel primary sweep.
+- Added generated freshness outputs:
+  - `report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png`
+  - `report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv`
+  - `report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md`
+- Updated generated report outputs to include the new freshness claim and artifact references:
+  - `report/final_report.md`
+  - `report/deliverable_gate.md`
+  - `report/assets/evidence_manifest.json`
+  - `report/assets/tables/intel_key_claims.md`
+- Updated `report/reproducibility.md` to note that this task regenerates from the existing Intel primary sweep and does not require a separate local-only sweep.
+- Updated `tests/test_build_report_assets.py` to lock the new default artifact contract and report wording.
+- Updated `PROJECT_CHECKLIST.md` locally only so the freshness item is marked done and the required-figures item reflects that only the explicit QoS comparison remains missing.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_build_report_assets.py
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+```
+
+### Verification Results
+
+- `python -m pytest tests/test_build_report_assets.py` passed.
+- No new sweep was required; the outage freshness artifact regenerated directly from `v0-qos0-outage_5s` and `v4-qos0-outage_5s` inside `final-intel-primary-20260403`.
+- The tracked report package now includes the new age-over-time figure, supporting table, manifest entries, deliverable-gate references, and paper text that explicitly says this task is answered by age-of-information over time rather than a stale-fraction-over-time plot.
+
+### Measured Intel Outage Freshness Result
+
+| Variant | Pre-outage rendered updates | Pre-outage mean age | Pre-outage p95 age | Outage rendered updates | Recovery rendered updates | Recovery mean age | Recovery p95 age | Recovery max age | End-state stale/latest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `v0` | `64` | `20.781 ms` | `44.0 ms` | `0` | `52` | `66.923 ms` | `119.9 ms` | `129.0 ms` | `80 / 80` |
+| `v4` | `112` | `284.196 ms` | `580.0 ms` | `0` | `68` | `190.279 ms` | `269.0 ms` | `269.0 ms` | `100 / 100` |
+
+### Analysis
+
+This task closes the freshness-evidence gap with a narrow but defensible result. The current dashboard export does not support a true stale-fraction-over-time trace because it records measurements only on rendered updates, not during idle periods. The right paper artifact here is therefore age-of-information over time, tied to the outage and recovery phases.
+
+The measured outcome is not a lower-age win for `v4`. In both the pre-outage and recovery phases, `v4` showed substantially older displayed data than `v0` (`580.0 ms` versus `44.0 ms` pre-outage p95, and `269.0 ms` versus `119.9 ms` recovery p95). During the five-second outage, neither side rendered new updates.
+
+What `v4` did provide was a larger retained last-known-good state at the end of the run. The final dashboard summary showed `100` stale/latest rows for `v4` versus `80` for `v0`, which is consistent with the intended LKG plus TTL behavior: preserve more visible state through the outage and recovery window, even though the visible values are older. The paper can now state that tradeoff directly instead of implying a generic freshness improvement.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder update, regenerated tracked report assets, the reproducibility update, the refreshed report text, the test update, and this appended `report.md`.

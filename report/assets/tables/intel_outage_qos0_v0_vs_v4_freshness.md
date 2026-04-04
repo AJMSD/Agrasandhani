@@ -1,0 +1,4 @@
+| variant | pre_outage_rendered_updates | pre_outage_age_mean_ms | pre_outage_age_p95_ms | outage_rendered_updates | recovery_rendered_updates | recovery_age_mean_ms | recovery_age_p95_ms | recovery_age_max_ms | end_state_stale_count | end_state_latest_row_count | run_dir |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v0 | 64 | 20.781 | 44.0 | 0 | 52 | 66.923 | 119.9 | 129.0 | 80 | 80 | experiments\logs\final-intel-primary-20260403\v0-qos0-outage_5s |
+| v4 | 112 | 284.196 | 580.0 | 0 | 68 | 190.279 | 269.0 | 269.0 | 100 | 100 | experiments\logs\final-intel-primary-20260403\v4-qos0-outage_5s |
