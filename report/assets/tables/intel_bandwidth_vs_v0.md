@@ -1,0 +1,10 @@
+| scenario | variant | baseline_downstream_bytes_out | variant_downstream_bytes_out | downstream_bytes_delta_pct | baseline_max_bandwidth_bytes_per_s | variant_max_bandwidth_bytes_per_s | max_bandwidth_delta_pct | baseline_downstream_frames_out | variant_downstream_frames_out | downstream_frames_delta_pct | latency_p95_ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean | v2 | 12069 | 13051 | 8.1% | 3288 | 4228 | 28.6% | 132 | 5 | -96.2% | 269.0 |
+| clean | v4 | 12069 | 17641 | 46.2% | 3288 | 4590 | 39.6% | 132 | 6 | -95.5% | 682.0 |
+| bandwidth_200kbps | v2 | 12069 | 13051 | 8.1% | 4014 | 4228 | 5.3% | 132 | 5 | -96.2% | 263.9 |
+| bandwidth_200kbps | v4 | 12069 | 17641 | 46.2% | 4014 | 4590 | 14.3% | 132 | 6 | -95.5% | 604.0 |
+| loss_2pct | v2 | 11883 | 13051 | 9.8% | 3923 | 4228 | 7.8% | 130 | 5 | -96.2% | 269.0 |
+| loss_2pct | v4 | 11883 | 17641 | 48.5% | 3923 | 4590 | 17.0% | 130 | 6 | -95.4% | 586.0 |
+| outage_5s | v2 | 10605 | 11401 | 7.5% | 4014 | 4228 | 5.3% | 116 | 4 | -96.6% | 277.0 |
+| outage_5s | v4 | 10605 | 17641 | 66.3% | 4014 | 4590 | 14.3% | 116 | 6 | -94.8% | 579.0 |

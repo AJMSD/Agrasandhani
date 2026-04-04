@@ -1,3 +1,4 @@
+- Intel qos0 downstream payload bytes did not drop below V0 in the paper-ready bandwidth comparison: V2 changed by 8.1% under clean, 8.1% under bandwidth_200kbps, 9.8% under loss_2pct, 7.5% under outage_5s, while V4 changed by 46.2% under clean, 46.2% under bandwidth_200kbps, 48.5% under loss_2pct, 66.3% under outage_5s. Both smart variants still cut downstream frame count by roughly 95%-97% across those same scenarios.
 - Intel clean qos0 latency p95 was 131.8 ms for V0, 269.0 ms for V2, and 682.0 ms for V4.
 - Intel outage qos1 downstream frame count dropped from 116 in V0 to 4 in V2 and 5 in V4 (-95.7% vs V0).
 - Intel outage qos1 downstream bytes moved from 10605 in V0 to 15621 in V4 (47.3% vs V0), which captures the tradeoff between fewer frames and larger aggregate envelopes.

@@ -69,6 +69,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertEqual(manifest["intel_sweep_dir"], str(intel_sweep))
             self.assertTrue((output_dir / "evidence_manifest.json").exists())
             self.assertTrue((output_dir / "tables" / "intel_primary_run_summary.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.md").exists())
             self.assertTrue((output_dir / "tables" / "aot_validation_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_key_claims.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_clean_qos0_latency_cdf.png").exists())
@@ -78,10 +80,16 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((report_dir / "final_report.md").exists())
             self.assertTrue((report_dir / "deliverable_gate.md").exists())
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
+            self.assertIn("did not drop below V0", key_claims)
             self.assertIn("retained 6 latest rows versus 6", key_claims)
+            bandwidth_table = (output_dir / "tables" / "intel_bandwidth_vs_v0.md").read_text(encoding="utf-8")
+            self.assertIn("| clean | v2 | 9800 | 13800 | 40.8% |", bandwidth_table)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn("did not show a downstream payload-byte reduction versus V0", final_report)
+            self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)
             self.assertIn("AoT provides a smaller portability check", final_report)
             deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_bandwidth_vs_v0.csv", deliverable_gate)
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
 
@@ -107,6 +115,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             "latency_p99_ms": latency_p95 + 20,
             "proxy_downstream_frames_out": frames,
             "proxy_downstream_bytes_out": bytes_out,
+            "max_bandwidth_bytes_per_s": bytes_out // 10,
             "gateway_mqtt_in_msgs": 200,
             "duplicates_dropped": 0,
             "compacted_dropped": 6 if variant != "v0" else 0,
@@ -142,6 +151,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             "latency_p99_ms": latency_p95 + 15,
             "proxy_downstream_frames_out": frames,
             "proxy_downstream_bytes_out": bytes_out,
+            "max_bandwidth_bytes_per_s": bytes_out // 10,
             "gateway_mqtt_in_msgs": 120,
             "duplicates_dropped": 0,
             "compacted_dropped": 4 if variant == "v4" else 0,

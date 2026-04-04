@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPORT_DIR = BASE_DIR / "report"
+INTEL_BANDWIDTH_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "outage_5s")
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -86,9 +87,67 @@ def _write_markdown_table(path: Path, rows: list[dict[str, object]], *, columns:
 
 
 def _format_delta(base: float, candidate: float) -> str:
-    if math.isclose(base, 0.0):
+    percent_delta = _percent_delta(base, candidate)
+    if percent_delta is None:
         return "n/a"
-    return f"{((candidate - base) / base) * 100:.1f}%"
+    return f"{percent_delta:.1f}%"
+
+
+def _percent_delta(base: float, candidate: float) -> float | None:
+    if math.isclose(base, 0.0):
+        return None
+    return ((candidate - base) / base) * 100
+
+
+def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scenario in INTEL_BANDWIDTH_SCENARIOS:
+        baseline = _select_row(intel_rows, variant="v0", scenario=scenario, mqtt_qos=0)
+        for variant in ("v2", "v4"):
+            candidate = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=0)
+            rows.append(
+                {
+                    "scenario": scenario,
+                    "variant": variant,
+                    "baseline_downstream_bytes_out": int(baseline["proxy_downstream_bytes_out"]),
+                    "variant_downstream_bytes_out": int(candidate["proxy_downstream_bytes_out"]),
+                    "downstream_bytes_delta_pct": _format_delta(
+                        float(baseline["proxy_downstream_bytes_out"]),
+                        float(candidate["proxy_downstream_bytes_out"]),
+                    ),
+                    "baseline_max_bandwidth_bytes_per_s": int(baseline["max_bandwidth_bytes_per_s"]),
+                    "variant_max_bandwidth_bytes_per_s": int(candidate["max_bandwidth_bytes_per_s"]),
+                    "max_bandwidth_delta_pct": _format_delta(
+                        float(baseline["max_bandwidth_bytes_per_s"]),
+                        float(candidate["max_bandwidth_bytes_per_s"]),
+                    ),
+                    "baseline_downstream_frames_out": int(baseline["proxy_downstream_frames_out"]),
+                    "variant_downstream_frames_out": int(candidate["proxy_downstream_frames_out"]),
+                    "downstream_frames_delta_pct": _format_delta(
+                        float(baseline["proxy_downstream_frames_out"]),
+                        float(candidate["proxy_downstream_frames_out"]),
+                    ),
+                    "latency_p95_ms": float(candidate["latency_p95_ms"]),
+                }
+            )
+    return rows
+
+
+def _format_bandwidth_comparison_series(
+    comparison_rows: list[dict[str, object]],
+    *,
+    variant: str,
+    delta_field: str,
+) -> str:
+    parts: list[str] = []
+    for scenario in INTEL_BANDWIDTH_SCENARIOS:
+        row = next(
+            candidate
+            for candidate in comparison_rows
+            if candidate["variant"] == variant and candidate["scenario"] == scenario
+        )
+        parts.append(f"{row[delta_field]} under {scenario}")
+    return ", ".join(parts)
 
 
 def _plot_latency_cdf(rows: list[dict[str, object]], *, scenario: str, mqtt_qos: int, output_path: Path) -> None:
@@ -166,6 +225,7 @@ def _build_key_claims(
     aot_rows: list[dict[str, object]],
     demo_dir: Path,
 ) -> str:
+    bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
     clean_v2 = _select_row(intel_rows, variant="v2", scenario="clean", mqtt_qos=0)
     clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
@@ -181,6 +241,12 @@ def _build_key_claims(
     aot_clean_v4 = _select_row(aot_rows, variant="v4", scenario="clean", mqtt_qos=0)
 
     lines = [
+        (
+            "- Intel qos0 downstream payload bytes did not drop below V0 in the paper-ready bandwidth comparison: "
+            f"V2 changed by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}, "
+            f"while V4 changed by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. "
+            "Both smart variants still cut downstream frame count by roughly 95%-97% across those same scenarios."
+        ),
         f"- Intel clean qos0 latency p95 was {clean_v0['latency_p95_ms']} ms for V0, {clean_v2['latency_p95_ms']} ms for V2, and {clean_v4['latency_p95_ms']} ms for V4.",
         (
             f"- Intel outage qos1 downstream frame count dropped from {outage_v0['proxy_downstream_frames_out']} in V0 "
@@ -218,6 +284,7 @@ def _write_final_report(
     intel_rows: list[dict[str, object]],
     aot_rows: list[dict[str, object]],
 ) -> None:
+    bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
     clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
     outage_v0 = _select_row(intel_rows, variant="v0", scenario="outage_5s", mqtt_qos=1)
@@ -232,7 +299,7 @@ def _write_final_report(
 
 ## Abstract
 
-Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while the adaptive V4 path reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
+Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while the adaptive V4 path reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching. The explicit Intel qos0 bandwidth comparison did not show a downstream payload-byte reduction versus V0; instead, the smart paths traded higher payload-byte totals for much lower frame counts. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
 
 ## 1. Introduction
 
@@ -245,6 +312,8 @@ The primary evidence run is `{intel_sweep_dir.name}`. It uses a bounded slice of
 ## 3. Results
 
 The clean qos0 run shows the expected tradeoff. V0 preserves the most immediate delivery path with a p95 display latency of {clean_v0['latency_p95_ms']} ms, whereas V4 increases p95 latency to {clean_v4['latency_p95_ms']} ms in exchange for frame consolidation. This is visible in the latency CDF and the message-rate plots in [report/assets/figures/intel_clean_qos0_latency_cdf.png](assets/figures/intel_clean_qos0_latency_cdf.png) and [report/assets/figures/intel_outage_qos1_message_rate_over_time.png](assets/figures/intel_outage_qos1_message_rate_over_time.png).
+
+The explicit Intel qos0 bandwidth comparison answers the first paper question directly. Compared with V0, V2 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}. V4 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. Peak per-second downstream payload rate also moved upward rather than downward: V2 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='max_bandwidth_delta_pct')}, while V4 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='max_bandwidth_delta_pct')}. In this evidence set, the smart paths reduce render cadence and frame count rather than downstream payload-byte volume. The paper-ready table for this claim is [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md).
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
 
@@ -290,7 +359,7 @@ def _write_deliverable_gate(
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
 - Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -320,6 +389,7 @@ def _write_deliverable_gate(
 def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir: Path, output_dir: Path) -> dict[str, object]:
     intel_rows = _load_summary_rows(intel_sweep_dir)
     aot_rows = _load_summary_rows(aot_sweep_dir)
+    bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     figures_dir = output_dir / "figures"
@@ -329,6 +399,7 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
 
     _write_csv(tables_dir / "intel_primary_run_summary.csv", intel_rows)
     _write_csv(tables_dir / "aot_validation_summary.csv", aot_rows)
+    _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
         intel_rows,
@@ -341,6 +412,24 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
             "proxy_downstream_frames_out",
             "proxy_downstream_bytes_out",
             "dashboard_stale_count",
+        ],
+    )
+    _write_markdown_table(
+        tables_dir / "intel_bandwidth_vs_v0.md",
+        bandwidth_rows,
+        columns=[
+            "scenario",
+            "variant",
+            "baseline_downstream_bytes_out",
+            "variant_downstream_bytes_out",
+            "downstream_bytes_delta_pct",
+            "baseline_max_bandwidth_bytes_per_s",
+            "variant_max_bandwidth_bytes_per_s",
+            "max_bandwidth_delta_pct",
+            "baseline_downstream_frames_out",
+            "variant_downstream_frames_out",
+            "downstream_frames_delta_pct",
+            "latency_p95_ms",
         ],
     )
     (tables_dir / "intel_key_claims.md").write_text(_build_key_claims(intel_rows, aot_rows, demo_dir), encoding="utf-8")
@@ -387,6 +476,8 @@ def build_report_assets(*, intel_sweep_dir: Path, aot_sweep_dir: Path, demo_dir:
         ],
         "generated_tables": [
             str(tables_dir / "intel_primary_run_summary.csv"),
+            str(tables_dir / "intel_bandwidth_vs_v0.csv"),
+            str(tables_dir / "intel_bandwidth_vs_v0.md"),
             str(tables_dir / "aot_validation_summary.csv"),
             str(tables_dir / "intel_key_claims.md"),
         ],
