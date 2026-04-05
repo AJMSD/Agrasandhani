@@ -1,0 +1,112 @@
+\documentclass[sigconf,authorversion,nonacm]{acmart}
+
+%%% ADDED PACKAGES %%%
+\usepackage{url}
+\usepackage[belowskip=0pt,aboveskip=5pt]{subcaption}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{xspace}
+\usepackage{makecell}
+\usepackage{amsmath}
+\usepackage{pifont}
+\usepackage{balance}
+\usepackage{soul}
+\usepackage{microtype}    
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage[noend]{algpseudocode}
+\usepackage{amsthm}
+\usepackage{comment}
+\usepackage{xr}
+\usepackage{color}
+\usepackage{setspace}
+\usepackage{listings}
+\usepackage{lipsum}
+\usepackage{adjustbox}
+\usepackage{array,multirow,graphicx}
+\usepackage{float}
+\usepackage{graphicx}
+
+\lstdefinestyle{code}{
+  backgroundcolor=\color{gray!4},
+  commentstyle=\color{codegray},
+  keywordstyle=\color{codepurple},
+  numberstyle=\tiny\color{codegray},
+  stringstyle=\color{codegray},
+  basicstyle=\ttfamily\footnotesize,
+  breakatwhitespace=false,         
+  breaklines=true,                 
+  captionpos=b,                    
+  keepspaces=true,                 
+  numbers=left,                    
+  numbersep=5pt,                  
+  showspaces=false,                
+  showstringspaces=false,
+  showtabs=false,                  
+  tabsize=2,
+  % escapeinside=||
+}
+\lstset{style=code}
+
+\lstset{escapeinside={<@}{@>}}
+%%% ADDED Commands %%%
+\definecolor{comment}{rgb}{0,0.6,0}
+\definecolor{dgray}{gray}{0.25}
+\definecolor{strings}{RGB}{0,0,128}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{keywords}{RGB}{127,0,85}
+\definecolor{darkred}{RGB}{139,0,0}
+\definecolor{darkyellow}{RGB}{204,204,0}
+\definecolor{darkblue}{rgb}{0.0, 0.0, 0.55}
+\definecolor{vividviolet}{rgb}{0.62, 0.0, 1.0}
+\definecolor{fuchsia}{rgb}{1.0, 0.0, 1.0}
+\definecolor{shockingpink}{rgb}{0.99, 0.06, 0.75}
+\definecolor{darkBlue}{RGB}{0, 0, 205}
+\lstset{breaklines=true}
+\captionsetup[lstlisting]{font={tiny}}
+\definecolor{problemblue}{RGB}{100,134,158}
+\definecolor{idiomsgreen}{RGB}{0,162,0}
+\definecolor{exercisebgblue}{rgb}{0,  .69,  .941}
+\definecolor{deepgreen}{rgb}{0.0, 0.5, 0.0}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{redColor}{RGB}{255,0,0}
+\definecolor{Gray}{gray}{0.1}
+\definecolor{CadetBlue}{RGB}{243.0,42.1,134.0}
+
+%%% Packages for Algorithms %%%
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\SetKwInput{KwInput}{Input}                % Set the Input
+\SetKwInput{KwInputs}{Inputs}                % Set the Input
+\SetKwInput{KwOutput}{Output}              % set the Output
+
+\begin{document}
+
+\title{CS 537 Research Project Proposal}
+
+\author{Aman Jain}
+\affiliation{
+    \institution{University of Illinois at Urbana-Champaign}
+}
+\email{aman18@illinois.edu}
+
+\begin{abstract}
+IoT dashboards increasingly depend on continuous, high-rate sensor streams, but naïvely forwarding every update end-to-end can overwhelm bandwidth, inflate tail latency, and yield unstable displays when the last hop degrades (loss, jitter, bandwidth caps, or short outages). Existing edge and gateway reduction techniques often reduce traffic volume, yet they do not consistently make dashboard-oriented semantics first-class—particularly under MQTT reliability settings where QoS~1 provides ``at least once'' delivery and duplicates may occur, complicating correctness and increasing overhead \cite{mqtt311}. We propose \textit{Agrasandhani}, an MQTT-based smart gateway that cleans and summarizes sensor streams via hybrid time/size batching, message-ID deduplication, within-batch latest-per-sensor compaction, and adaptive publish-rate control based on publish health signals, coupled with last-known-good dashboard semantics that expose an explicit freshness (age) indicator with a TTL. We will evaluate an ablation ladder of gateway variants (V0--V4) under QoS~0 and QoS~1 using deterministic, repeatable network impairments (bandwidth caps, loss, delay/jitter, and outages) injected primarily on the gateway-to-dashboard path with Linux traffic control (e.g., \texttt{tc netem}) \cite{jurgelionis2011_netem_empirical}, reporting end-to-end latency (including p95/p99), message rate, bandwidth usage, data loss, and freshness to characterize the trade-offs between communication reduction, timeliness, and user-visible stability.
+\end{abstract}
+
+\maketitle
+
+\input{Sections/TeamInfo}
+\input{Sections/introduction}
+\input{Sections/approach}
+\input{Sections/evaluation}
+\input{Sections/actionplan}
+\input{Sections/related-work}
+
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

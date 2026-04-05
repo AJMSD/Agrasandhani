@@ -1,0 +1,14 @@
+\section{Action Plan}
+\label{sec:action-plan}
+
+We will follow an implementation-first plan with fixed internal deadlines to ensure completion and allow time for repeated experiments and analysis.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Week 1:} Repository + Mosquitto setup; implement sensor simulator publishing \texttt{sensors/raw}; logging skeleton (CSV/JSON).
+  \item \textbf{Week 2:} Implement V0 (naive forwarder) and dashboard backend + WebSocket + minimal web UI.
+  \item \textbf{Week 3:} Implement V1 (hybrid batching with $(T,K)$) and V2 (msg\_id dedup + latest-per-sensor compaction); add compression ratio metrics.
+  \item \textbf{Week 4:} Implement V3 adaptive publish-rate control (control law + telemetry of $T(t)$, backlog, publish-time EMA).
+  \item \textbf{Week 5:} Implement V4 dashboard semantics (age display + TTL to mark stale/N/A); add freshness metric logging.
+  \item \textbf{Week 6:} Add deterministic impairment scripts for loss/delay/jitter/bandwidth cap/outage using \texttt{tc}; run initial experiment matrix.
+  \item \textbf{Week 7:} Full experiment reruns (2--3 trials/condition), plot generation, threats-to-validity, write-up polish.
+\end{itemize}
