@@ -25,6 +25,7 @@ OUTAGE_PHASE_WINDOWS: tuple[tuple[str, float, float | None], ...] = (
     ("outage", 10.0, 15.0),
     ("recovery", 15.0, None),
 )
+PAPER_MAIN_VARIANTS = ("v0", "v2", "v4")
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -315,6 +316,29 @@ def _build_intel_condensed_summary_rows(intel_rows: list[dict[str, object]]) -> 
             )
     if not rows:
         raise ValueError("No Intel rows were found for condensed summary outputs")
+    return rows
+
+
+def _build_intel_main_summary_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scenario in INTEL_BANDWIDTH_SCENARIOS:
+        for variant in PAPER_MAIN_VARIANTS:
+            try:
+                source = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=0)
+            except KeyError:
+                continue
+            rows.append(
+                {
+                    "Variant": variant.upper(),
+                    "Downstream Frames": int(source["proxy_downstream_frames_out"]),
+                    "Downstream Bytes": int(source["proxy_downstream_bytes_out"]),
+                    "Latency p95": float(source["latency_p95_ms"]),
+                    "Stale Fraction": float(source.get("stale_fraction", 0.0)),
+                    "Scenario": scenario,
+                }
+            )
+    if not rows:
+        raise ValueError("No Intel qos0 rows were found for main summary outputs")
     return rows
 
 
@@ -806,6 +830,52 @@ def _plot_outage_age_over_time(rows: list[dict[str, object]], *, output_path: Pa
     plt.close(figure)
 
 
+def _plot_main_outage_frame_rate(rows: list[dict[str, object]], *, output_path: Path) -> None:
+    figure, axis = plt.subplots(figsize=(10, 5))
+    styles = {
+        "v0": ("tab:blue", "V0"),
+        "v2": ("tab:orange", "V2"),
+        "v4": ("tab:green", "V4"),
+    }
+    max_relative_second = 0.0
+
+    for variant in PAPER_MAIN_VARIANTS:
+        row = _select_row(rows, variant=variant, scenario="outage_5s", mqtt_qos=0)
+        series = _load_timeseries(Path(str(row["run_dir"])))
+        if not series:
+            continue
+        first_second = series[0]["epoch_second"]
+        x_values = [point["epoch_second"] - first_second for point in series]
+        y_values = [point["frame_rate_per_s"] for point in series]
+        max_relative_second = max(max_relative_second, max(x_values, default=0.0))
+        color, label = styles[variant]
+        axis.plot(x_values, y_values, marker="o", color=color, label=label)
+
+    phase_colors = {
+        "steady-before-outage": "#d9edf7",
+        "outage": "#f2dede",
+        "recovery": "#dff0d8",
+    }
+    phase_end = max_relative_second if max_relative_second > 0 else 20.0
+    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
+        clipped_end_s = phase_end if end_s is None else min(end_s, phase_end)
+        if clipped_end_s <= start_s:
+            continue
+        axis.axvspan(start_s, clipped_end_s, color=phase_colors[phase_name], alpha=0.2)
+    axis.axvline(10.0, color="0.4", linestyle="--", linewidth=1)
+    axis.axvline(15.0, color="0.4", linestyle="--", linewidth=1)
+
+    axis.set_xlabel("Relative second from first proxy frame")
+    axis.set_ylabel("Downstream frames per second")
+    axis.set_title("Downstream Frame Rate Over Time During Outage: V0 vs V2 vs V4")
+    axis.grid(True, axis="y", alpha=0.3)
+    axis.legend(loc="best")
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
 def _plot_batch_window_tradeoff(rows: list[dict[str, object]], *, output_path: Path) -> None:
     batch_windows = [row["batch_window_ms"] for row in rows]
     latency_values = [row["latency_p95_ms"] for row in rows]
@@ -1275,6 +1345,11 @@ The condensed summary table now provides a compact scan view across `v0`, `v2`, 
 
 The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
 """
+    report_text += """
+
+The main outage frame-rate figure is [report/assets/figures/main_outage_frame_rate.png](assets/figures/main_outage_frame_rate.png), and it is the paper's primary outage result. Read in continuity terms, the figure shows that V0 stays burstier and more variable through the outage window, while V2 and V4 compress the stream into a steadier, lower-cadence display that keeps the dashboard easier to track during outage and recovery. V4 is the most aggressive at stabilizing cadence, but the interpretation is not that it increases throughput; it is that the smart gateway makes the outage visually manageable by trading raw frame frequency for continuity.
+
+"""
     report_text += f"""
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted {outage_v0['proxy_downstream_frames_out']} downstream frames, while V4 emitted {outage_v4['proxy_downstream_frames_out']}. At the same time, V4's aggregate envelopes pushed downstream bytes from {outage_v0['proxy_downstream_bytes_out']} in V0 to {outage_v4['proxy_downstream_bytes_out']} in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
@@ -1384,6 +1459,7 @@ def build_report_assets(
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     intel_qos_rows = _build_intel_qos_comparison_rows(intel_rows)
     intel_condensed_rows = _build_intel_condensed_summary_rows(intel_rows)
+    intel_main_summary_rows = _build_intel_main_summary_rows(intel_rows)
     intel_outage_freshness_rows = _build_intel_outage_freshness_rows(intel_rows)
     intel_batch_rows = (
         _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
@@ -1412,6 +1488,7 @@ def build_report_assets(
     _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
     _write_csv(tables_dir / "intel_qos_comparison.csv", intel_qos_rows)
     _write_csv(tables_dir / "intel_condensed_summary.csv", intel_condensed_rows)
+    _write_csv(tables_dir / "intel_main_summary_table.csv", intel_main_summary_rows)
     _write_csv(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv", intel_outage_freshness_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
@@ -1501,6 +1578,18 @@ def build_report_assets(
             "proxy_downstream_frames_out",
             "proxy_downstream_bytes_out",
             "stale_fraction",
+        ],
+    )
+    _write_markdown_table(
+        tables_dir / "intel_main_summary_table.md",
+        intel_main_summary_rows,
+        columns=[
+            "Variant",
+            "Downstream Frames",
+            "Downstream Bytes",
+            "Latency p95",
+            "Stale Fraction",
+            "Scenario",
         ],
     )
     if intel_batch_rows is not None:
@@ -1630,6 +1719,10 @@ def build_report_assets(
         intel_rows,
         output_path=figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png",
     )
+    _plot_main_outage_frame_rate(
+        intel_rows,
+        output_path=figures_dir / "main_outage_frame_rate.png",
+    )
     _plot_qos_comparison(
         intel_qos_rows,
         output_path=figures_dir / "intel_qos_comparison.png",
@@ -1665,6 +1758,7 @@ def build_report_assets(
             str(figures_dir / "intel_outage_qos1_bandwidth_over_time.png"),
             str(figures_dir / "intel_outage_qos1_message_rate_over_time.png"),
             str(figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png"),
+            str(figures_dir / "main_outage_frame_rate.png"),
             str(figures_dir / "intel_qos_comparison.png"),
             str(figures_dir / "final_demo_compare.png"),
             str(figures_dir / "final_demo_baseline_dashboard.png"),
@@ -1678,6 +1772,8 @@ def build_report_assets(
             str(tables_dir / "intel_qos_comparison.md"),
             str(tables_dir / "intel_condensed_summary.csv"),
             str(tables_dir / "intel_condensed_summary.md"),
+            str(tables_dir / "intel_main_summary_table.csv"),
+            str(tables_dir / "intel_main_summary_table.md"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv"),
             str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
             str(tables_dir / "aot_validation_summary.csv"),

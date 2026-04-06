@@ -33,6 +33,10 @@ The condensed summary table now provides a compact scan view across `v0`, `v2`, 
 The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
 
 
+The main outage frame-rate figure is [report/assets/figures/main_outage_frame_rate.png](assets/figures/main_outage_frame_rate.png), and it is the paper's primary outage result. Read in continuity terms, the figure shows that V0 stays burstier and more variable through the outage window, while V2 and V4 compress the stream into a steadier, lower-cadence display that keeps the dashboard easier to track during outage and recovery. V4 is the most aggressive at stabilizing cadence, but the interpretation is not that it increases throughput; it is that the smart gateway makes the outage visually manageable by trading raw frame frequency for continuity.
+
+
+
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted 116 downstream frames, while V4 emitted 5. At the same time, V4's aggregate envelopes pushed downstream bytes from 10605 in V0 to 15621 in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.
 
 The broker-backed QoS1 runs did not trigger large duplicate counts in this local setup. In fact, the measured exact duplicate-drop counter remained at 0 across the Intel primary QoS1 matrix, so the QoS discussion in this report is necessarily cautious. The final claims here concern observed end-to-end behavior in this environment rather than a general statement that QoS1 duplicates are common in every deployment.

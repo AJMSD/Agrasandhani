@@ -506,3 +506,45 @@ In practical paper terms, this strengthens reproducibility and reduces over-clai
 ### Commit And Push Note
 
 `PROJECT_CHECKLIST.md` and `PRD.md` are local-only in this session and must not be staged or pushed.
+
+## Project Checklist G2 Session Report
+
+### Task Goal
+
+Promote the Intel outage frame-rate figure to the main report narrative so the paper treats it as the primary outage result, not as a secondary artifact hidden behind aggregate bandwidth language. The goal was to make the generated report explicitly reference [report/assets/figures/main_outage_frame_rate.png](report/assets/figures/main_outage_frame_rate.png) and explain the outage/recovery behavior in frame-rate continuity terms for V0, V2, and V4.
+
+### What Was Changed
+
+- Updated `experiments/build_report_assets.py` so the generated final-report text now includes an explicit paragraph for `main_outage_frame_rate.png`.
+- Framed that paragraph as the paper's primary outage result and described the result in continuity terms rather than byte-volume terms.
+- Kept the narrative aligned with `context.md` Section 7, which already defines the outage frame-rate figure as the main figure of the paper.
+- Added a regression assertion in `tests/test_build_report_assets.py` so the generated report must keep citing `main_outage_frame_rate.png` and must keep the primary-result wording.
+- Regenerated `report/final_report.md` from the builder so the tracked output now contains the updated results narrative.
+- Marked the G2 checklist item complete locally in `PROJECT_CHECKLIST.md` without staging it for push.
+
+### Commands Run
+
+```powershell
+& ".venv\Scripts\python.exe" .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+& ".venv\Scripts\python.exe" -m pytest tests\test_build_report_assets.py -v
+& ".venv\Scripts\python.exe" -m unittest tests.test_build_report_assets
+```
+
+### Verification Results
+
+- The report builder completed successfully and regenerated the tracked report assets.
+- The generated [report/final_report.md](report/final_report.md) now contains the explicit paragraph tying the outage story to [report/assets/figures/main_outage_frame_rate.png](report/assets/figures/main_outage_frame_rate.png).
+- `pytest` is not installed in the active virtual environment, so the equivalent `unittest` path was used for regression verification.
+- `python -m unittest tests.test_build_report_assets` passed with `Ran 5 tests in 19.838s` and `OK`.
+
+### Analysis
+
+This change does not alter the experiment data or the dashboard behavior. It changes how the measured evidence is presented in the final report so the paper's central outage claim matches the repository's own source of truth: frame-rate continuity is the primary outage outcome.
+
+That framing matters because the figure shows a different kind of success than the bandwidth tables. V0 remains the most bursty and least stable trace through the outage window, which makes the dashboard harder to read when continuity matters. V2 and V4 compress the stream into steadier, lower-cadence traces, and that makes the outage and recovery periods easier for an operator to follow. In other words, the smart gateway's value here is not lower payload volume; it is visual continuity under interruption.
+
+The result is also properly bounded. V4 is the most aggressive at stabilizing the display cadence, but that should be read as a readability and continuity win, not as a throughput win. This keeps the paper aligned with the measured evidence: the main outage figure supports the claim that the system preserves a usable live view through interruption by trading frame frequency for steadier continuity.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only in this session and must not be staged or pushed. The push should contain the builder update, the updated test, the regenerated tracked report assets, and this appended `report.md` section.
