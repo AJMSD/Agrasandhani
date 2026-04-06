@@ -1,0 +1,13 @@
+Variant,Downstream Frames,Downstream Bytes,Latency p95,Stale Fraction,Scenario
+V0,132,12069,131.8,0.0,clean
+V2,5,13051,269.0,0.0,clean
+V4,6,17641,682.0,0.0,clean
+V0,132,12069,119.35,0.0,bandwidth_200kbps
+V2,5,13051,263.9,0.0,bandwidth_200kbps
+V4,6,17641,604.0,0.0,bandwidth_200kbps
+V0,130,11883,120.55,0.0,loss_2pct
+V2,5,13051,269.0,0.0,loss_2pct
+V4,6,17641,586.0,0.0,loss_2pct
+V0,116,10605,112.25,0.0,outage_5s
+V2,4,11401,277.0,0.0,outage_5s
+V4,6,17641,579.0,0.0,outage_5s

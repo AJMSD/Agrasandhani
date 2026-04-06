@@ -35,6 +35,8 @@ The explicit claim-guardrail review is captured in [report/assets/tables/intel_c
 
 The main outage frame-rate figure is [report/assets/figures/main_outage_frame_rate.png](assets/figures/main_outage_frame_rate.png), and it is the paper's primary outage result. Read in continuity terms, the figure shows that V0 stays burstier and more variable through the outage window, while V2 and V4 compress the stream into a steadier, lower-cadence display that keeps the dashboard easier to track during outage and recovery. V4 is the most aggressive at stabilizing cadence, but the interpretation is not that it increases throughput; it is that the smart gateway makes the outage visually manageable by trading raw frame frequency for continuity.
 
+The outage bandwidth-over-time trace is [report/assets/figures/intel_outage_qos1_bandwidth_over_time.png](assets/figures/intel_outage_qos1_bandwidth_over_time.png). It is useful for seeing when downstream payload bytes are emitted during the outage and recovery window, but it should not be read as evidence of a payload-byte reduction. That interpretation stays consistent with [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), where V2 and V4 both increase downstream bytes versus V0 in every Intel qos0 scenario, including outage_5s.
+
 
 
 The outage qos1 run makes the UI tradeoff clearer. V0 emitted 116 downstream frames, while V4 emitted 5. At the same time, V4's aggregate envelopes pushed downstream bytes from 10605 in V0 to 15621 in V4. The result is not a blanket bandwidth win; it is a cadence and interpretability win. This is the right framing for the project, and it avoids overselling aggregate framing as a byte-minimization technique.

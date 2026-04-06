@@ -114,6 +114,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
             self.assertIn("did not show a downstream payload-byte reduction versus V0", final_report)
             self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)
+            self.assertIn("intel_outage_qos1_bandwidth_over_time.png", final_report)
+            self.assertIn("should not be read as evidence of a payload-byte reduction", final_report)
             self.assertIn("main_outage_frame_rate.png", final_report)
             self.assertIn("The main outage frame-rate figure is", final_report)
             self.assertIn("paper's primary outage result", final_report)

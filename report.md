@@ -548,3 +548,37 @@ The result is also properly bounded. V4 is the most aggressive at stabilizing th
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only in this session and must not be staged or pushed. The push should contain the builder update, the updated test, the regenerated tracked report assets, and this appended `report.md` section.
+
+## Project Checklist G3 Session Report
+
+### Task Goal
+
+Close the next open checklist item by surfacing the Intel outage bandwidth-over-time evidence in the final report text, without overclaiming bandwidth reduction and while staying consistent with the existing Intel bandwidth-vs-V0 table.
+
+### What Was Changed
+
+- Updated `experiments/build_report_assets.py` so the generated final report now includes a dedicated paragraph for `report/assets/figures/intel_outage_qos1_bandwidth_over_time.png`.
+- Framed that paragraph as an interpretation of the outage/recovery bandwidth trace, not as a payload-byte reduction claim.
+- Kept the wording aligned with `report/assets/tables/intel_bandwidth_vs_v0.md`, which already shows V2 and V4 increasing downstream bytes versus V0 in the Intel qos0 scenarios.
+- Updated `tests/test_build_report_assets.py` to assert the new figure reference and bounded wording appear in the generated report.
+- Marked the G3 checklist item complete locally in `PROJECT_CHECKLIST.md`.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_build_report_assets.py
+python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+```
+
+### Verification Results
+
+- `python -m unittest tests.test_build_report_assets` passed with `Ran 5 tests` and `OK`.
+- The regenerated `report/final_report.md` now explicitly cites `report/assets/figures/intel_outage_qos1_bandwidth_over_time.png`.
+- The new paragraph stays bounded: it treats the trace as outage/recovery shape evidence and does not claim a payload-byte reduction.
+- The interpretation remains consistent with `report/assets/tables/intel_bandwidth_vs_v0.md`, which shows V2 and V4 increasing downstream bytes versus V0 in the Intel qos0 scenarios.
+
+### Analysis
+
+The right reading of the figure is operational, not promotional. The bandwidth-over-time trace shows when payload bytes move through the outage window, which helps explain the shape of the stream during interruption and recovery. It does not support a lower-bandwidth claim because the existing Intel bandwidth-vs-V0 table shows the opposite direction on total downstream bytes. That makes the figure useful as support for outage behavior, but not as evidence of byte savings.
+
+This matters for the paper because it keeps the claims bounded to the actual measured behavior. The project can confidently say that the smart gateway changes the cadence and timing of downstream traffic through outage, but it should not imply that those changes reduce total bytes in this evidence set. The updated report text now reflects that distinction directly.
