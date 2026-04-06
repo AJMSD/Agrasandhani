@@ -461,3 +461,48 @@ The practical impact is that the paper now has a hard boundary against over-clai
 ### Commit And Push Note
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain builder/test changes, regenerated tracked report assets, refreshed generated report docs, and this appended `report.md`.
+
+## Project Checklist G1 Session Report
+
+### Task Goal
+
+Implement the first open task in `PROJECT_CHECKLIST.md` (G1) by resolving the dataset mismatch in `context.md`, then verify consistency with `report/final_report.md` and `report/reproducibility.md` so the project narrative reflects only datasets that have implemented preprocessing, replay runs, and tracked evidence.
+
+### What Was Changed
+
+- Updated `context.md` Section 8 to remove unsupported wording that implied a generic Environmental/Temperature dataset.
+- Replaced the second-dataset description with the concrete implemented source: Intel Berkeley Lab deployment data.
+- Clarified AoT positioning as portability/validation and Intel as primary final-matrix workload.
+- Added an explicit sentence in `context.md` stating no additional temperature-only dataset is used in tracked final evidence.
+- Updated `PROJECT_CHECKLIST.md` locally to mark G1 complete.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_preprocess_aot.py tests/test_preprocess_intel_lab.py tests/test_build_report_assets.py
+python -m unittest tests.test_preprocess_aot tests.test_preprocess_intel_lab tests.test_build_report_assets
+```
+
+### Verification Results
+
+- `pytest` command failed because `pytest` is not installed in the active venv (`No module named pytest`).
+- Equivalent targeted validation succeeded with `unittest`:
+  - `Ran 9 tests in 12.511s`
+  - `OK`
+- Cross-document wording check confirmed two-dataset consistency across:
+  - `context.md`
+  - `report/final_report.md`
+  - `report/reproducibility.md`
+- No remaining statement was found that implies a third standalone temperature dataset in the tracked narrative.
+
+### Analysis
+
+This is a documentation-integrity fix, not a gateway behavior change. No experiment code paths, impairment logic, or replay-analysis computations were modified by this task. Therefore, metric outcomes from previously generated evidence remain unchanged.
+
+The impact is methodological: the narrative layer now correctly constrains claims to the two datasets that are actually implemented and evidenced (Intel Berkeley Lab and AoT). That matters for the experiment because dataset scope is part of external validity. Before this correction, readers could infer broader dataset coverage than the repository can substantiate. After this correction, the claim boundary is tighter and auditable against preprocessors, reproducibility steps, and tracked artifacts.
+
+In practical paper terms, this strengthens reproducibility and reduces over-claim risk. Conclusions should now be interpreted as supported by a primary Intel matrix plus AoT portability validation, rather than by an implied third temperature dataset. This improves alignment between what was measured and what is stated.
+
+### Commit And Push Note
+
+`PROJECT_CHECKLIST.md` and `PRD.md` are local-only in this session and must not be staged or pushed.
