@@ -622,3 +622,50 @@ python .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs
 The right reading of the figure is operational, not promotional. The bandwidth-over-time trace shows when payload bytes move through the outage window, which helps explain the shape of the stream during interruption and recovery. It does not support a lower-bandwidth claim because the existing Intel bandwidth-vs-V0 table shows the opposite direction on total downstream bytes. That makes the figure useful as support for outage behavior, but not as evidence of byte savings.
 
 This matters for the paper because it keeps the claims bounded to the actual measured behavior. The project can confidently say that the smart gateway changes the cadence and timing of downstream traffic through outage, but it should not imply that those changes reduce total bytes in this evidence set. The updated report text now reflects that distinction directly.
+
+## Project Checklist G6 Session Report
+
+### Task Goal
+
+Resolve the remaining impairment-path inconsistency by aligning wording across `context.md`, `report/final_report.md`, `README_reproducibility.md`, and `research_paper/Sections/evaluation.tex` so all documents describe the same evaluated injection path and match the measured downstream proxy metrics.
+
+### What Was Changed
+
+- Updated `context.md` to explicitly state that evaluated impairments are injected primarily on the gateway-to-dashboard last hop through the impairment proxy, with optional host-level `tc netem` shaping in the same last-hop context.
+- Updated `README_reproducibility.md` to add an explicit impairment-placement block and tie reported downstream metrics to proxy-level outputs (`proxy_downstream_bytes_out`, `proxy_downstream_frames_out`).
+- Updated `research_paper/Sections/evaluation.tex` in the Evaluation Setting subsection to describe proxy-first last-hop impairment placement, with optional `tc netem` in that same context, and to state that downstream evidence comes from proxy counters.
+- Updated `experiments/build_report_assets.py` so generated final-report method text now carries the same canonical impairment-path wording.
+- Regenerated `report/final_report.md` from existing April logs so the tracked report artifact reflects the aligned statement.
+- Updated `tests/test_build_report_assets.py` with regression assertions that the generated final report retains the new impairment-path wording and proxy metric identifiers.
+- Updated `PROJECT_CHECKLIST.md` locally to mark G6 complete and to mark the related completion-gate checks satisfied.
+
+### Commands Run
+
+```powershell
+.\.venv\Scripts\python.exe .\experiments\build_report_assets.py --intel-sweep-dir .\experiments\logs\final-intel-primary-20260403 --aot-sweep-dir .\experiments\logs\final-aot-validation-20260403 --demo-dir .\experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir .\report\assets
+.\.venv\Scripts\python.exe -m unittest tests.test_build_report_assets
+.\.venv\Scripts\python.exe -m unittest tests.test_impairment tests.test_impairment_proxy
+```
+
+### Verification Results
+
+- Report regeneration succeeded and wrote refreshed report assets plus updated `report/final_report.md`.
+- `tests.test_build_report_assets` passed (`Ran 5 tests ... OK`).
+- `tests.test_impairment` and `tests.test_impairment_proxy` passed (`Ran 6 tests ... OK`).
+- Cross-file consistency checks confirmed matching wording and metric references in:
+  - `context.md`
+  - `README_reproducibility.md`
+  - `report/final_report.md`
+  - `research_paper/Sections/evaluation.tex`
+
+### Analysis
+
+This is a narrative-and-traceability correction, not an algorithm change. No impairment logic, gateway behavior, replay control, or metric-computation code path was modified. Therefore, measured outcomes from the April evidence runs remain unchanged.
+
+What changed is the interpretive boundary of the experiment. After this update, all key documents agree that the reported impairment evidence is primarily last-hop (gateway-to-dashboard) and proxy-instrumented. That alignment matters because the core result tables and figures use proxy downstream counters (`proxy_downstream_bytes_out`, `proxy_downstream_frames_out`). Without this wording alignment, readers could misread those counters as broker-link measurements and draw incorrect conclusions about where degradation and recovery behavior are being observed.
+
+For the experiment narrative, the practical impact is stronger claim validity. The report can now cleanly state that frame-cadence stabilization, outage continuity behavior, and byte/frame tradeoffs are measured at the dashboard-facing hop where the impairment proxy operates. This improves reproducibility, clarifies causal interpretation of the outage figures, and removes a key cross-document ambiguity that previously weakened evidence mapping.
+
+### Commit And Push Note
+
+`PROJECT_CHECKLIST.md` and `PRD.md` are local-only in this session and must not be staged or pushed.

@@ -127,6 +127,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("| v4 |", freshness_table)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
             self.assertIn("did not show a downstream payload-byte reduction versus V0", final_report)
+            self.assertIn("gateway-to-dashboard last hop", final_report)
+            self.assertIn("proxy_downstream_bytes_out", final_report)
             self.assertIn("### 2.1 Latency metrics", final_report)
             self.assertIn("four latency summaries", final_report)
             self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)

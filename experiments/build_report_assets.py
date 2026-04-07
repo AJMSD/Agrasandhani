@@ -1328,6 +1328,8 @@ The project goal is to make bursty IoT replay traffic easier to visualize withou
 
 The primary evidence run is `{intel_sweep_dir.name}`. It uses a bounded slice of the Intel Berkeley Lab deployment data [@intelLabData] preprocessed into Agrasandhani's normalized replay schema, then runs `V0`, `V2`, and `V4` across `clean`, `bandwidth_200kbps`, `loss_2pct`, `delay_50ms_jitter20ms`, and `outage_5s` at MQTT QoS `0` and `1`. Each run uses a 30 second wall-clock replay, a 5x speedup, a 200-sensor target, and burst mode. The portability check is `{aot_sweep_dir.name}`, built from a bounded slice of the AoT weekly archive dataset [@aotCyberGIS] with a smaller validation matrix. The live demo evidence comes from `{demo_dir.parent.name}`.
 
+For these evidence runs, impairments are injected primarily on the gateway-to-dashboard last hop using the impairment proxy, with optional host-level `tc netem` shaping in the same last-hop context. The reported downstream traffic metrics in this report are proxy-level outputs (`proxy_downstream_bytes_out`, `proxy_downstream_frames_out`).
+
 ### 2.1 Latency metrics
 
 The paper standardizes on four latency summaries throughout the report assets: mean, p50, p95, and p99. p95 remains the headline comparison in the prose because it captures the high-end user-visible delay most directly, but the generated tables now carry the full set so the claims and metrics stay aligned with [experiments/analyze_run.py](../experiments/analyze_run.py).

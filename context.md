@@ -1,363 +1,330 @@
-# PROJECT_CONTEXT.md
+# context.md
 
-**Project Name:** Agrasandhini — MQTT-Based Smart Gateway for Sensor Visualization Under Network Impairments
-**Course:** CS 537 – Multimedia Systems
-**Project Type:** Systems + Networking + IoT Research Project
-**Date:** April 2026
+## Agrasandhani — Project Context
 
----
-
-# 1. Project Overview
-
-Agrasandhini is a **smart gateway system for IoT sensor data visualization** that studies how **MQTT-based sensor pipelines behave under network impairments** such as:
-
-* Packet loss
-* Network delay
-* Bandwidth limitations
-* Temporary network outages
-
-The project builds a **full end-to-end system** and evaluates **reliability, latency, throughput, and dashboard frame rate** under different system configurations (batching levels) and network conditions.
-
-This is not just an IoT dashboard — it is a **systems research project** focused on **reliability and performance of MQTT pipelines under impaired networks**.
+**Project:** Agrasandhani  
+**Course:** CS 537 — Multimedia Systems  
+**Project Type:** Solo research-oriented systems project  
+**Student:** Aman Jain
 
 ---
 
-# 2. Final System Architecture
+## 1. What this project is trying to do
 
-## Architecture (Final Version After Professor Feedback)
+Agrasandhani is a research project about how to make **IoT sensor visualization more stable and interpretable under imperfect network conditions**.
 
-```
-Sensors / Dataset Simulator
-            ↓
-        MQTT Publisher
-            ↓
-        MQTT Broker
-            ↓
-    Impairment Harness
-   (loss, delay, outage)
-            ↓
-        Smart Gateway
-   (processing + batching)
-            ↓
-        WebSocket Server
-            ↓
-        Dashboard (Grafana / Web UI)
-```
+The core idea is simple:
+
+- IoT sensors often produce frequent, bursty streams of updates.
+- A dashboard that naively forwards and displays every update can become unstable, bandwidth-heavy, and hard to interpret.
+- Network issues such as **loss, delay, jitter, bandwidth caps, and outages** make this worse.
+- A **smart gateway** placed between the sensor stream and the dashboard can summarize, stabilize, and manage what gets shown to the user.
+
+So the project is not just about building a dashboard or brokered sensor pipeline. It is about studying the **trade-offs** introduced by gateway policies such as batching, compaction, and state retention, and asking:
+
+> How should a gateway transform sensor streams so that a dashboard remains useful and stable when the network is imperfect?
+
+That framing comes directly from the proposal’s emphasis on end-to-end dashboard semantics, MQTT reliability behavior, and user-visible stability under degraded last-hop conditions. :contentReference[oaicite:0]{index=0}
 
 ---
 
-# 3. Key Design Decisions
+## 2. The motivating problem
 
-## 3.1 MQTT is Used For
+The project starts from a practical systems problem:
 
-* Communication between **Sensors → MQTT Broker → Smart Gateway**
-* Lightweight, reliable pub/sub protocol
-* Supports QoS levels
-* Suitable for IoT streaming
+### Naive forwarding is fragile
+If every sensor message is forwarded end-to-end without any shaping or summarization:
 
-## 3.2 WebSockets Are Used For
+- bandwidth usage can grow quickly,
+- dashboards can flicker or update too frequently,
+- retransmissions or duplicates can distort state,
+- temporary network degradation can cause visible instability,
+- users may see stale, delayed, or apparently erratic information.
 
-* Communication between **Smart Gateway → Dashboard**
-* Needed for **real-time visualization**
-* Better for browser dashboards than MQTT
+In human-facing monitoring systems, what matters is not only whether a message eventually arrives, but whether the **displayed state remains timely, stable, and understandable**.
 
-## 3.3 Smart Gateway Responsibilities
-
-The Smart Gateway is the **core system component** and performs:
-
-* MQTT subscription
-* Message buffering
-* Batching
-* Aggregation
-* Processing
-* Forwarding to dashboard via WebSockets
-* Handling network impairment effects
-* Recovery after outages
-
-The **backend and smart gateway are merged** into a single component.
+The proposal explicitly frames this as a gap in many existing reduction techniques: they often optimize traffic volume, but they do not always make **dashboard-oriented semantics** first-class, especially under MQTT reliability modes and degraded network paths. :contentReference[oaicite:1]{index=1}
 
 ---
 
-# 4. Research Goals
+## 3. The core concept of Agrasandhani
 
-The main research goal:
+Agrasandhani is a **smart gateway for sensor visualization**.
 
-> Study how an MQTT-based smart gateway pipeline behaves under network impairments and how batching and gateway design improve reliability and visualization continuity.
+Its role is to sit between incoming sensor traffic and the dashboard, and to decide **how** updates should be represented to the visualization layer.
 
----
+Conceptually, it does four things:
 
-# 5. Experiment Variables
+1. **Cleans the stream**
+   - handles duplicate or redundant updates
 
-## 5.1 System Variants (Batching Levels)
+2. **Summarizes the stream**
+   - groups or compacts rapid updates instead of exposing every raw message
 
-| Variant | Description                                  |
-| ------- | -------------------------------------------- |
-| V0      | No batching (send every message immediately) |
-| V2      | Medium batching                              |
-| V4      | High batching                                |
+3. **Responds to network conditions**
+   - changes its behavior when the downstream path degrades
 
-Batching affects:
+4. **Maintains dashboard continuity**
+   - preserves last-known values so the UI remains informative during disruption
 
-* Reliability
-* Latency
-* Throughput
-* Dashboard frame rate
-* Recovery after outage
-
----
-
-## 5.2 Network Impairments
-
-The impairment harness introduces:
-
-| Impairment      | Description                              |
-| --------------- | ---------------------------------------- |
-| Packet Loss     | Random packet drops                      |
-| Delay           | Added latency                            |
-| Bandwidth Limit | Throttled network                        |
-| Outage          | Complete connection drop for time window |
-
-Impairments are applied **between MQTT Broker and Smart Gateway**.
+This makes the gateway more than a relay. It becomes the system component that defines the relationship between:
+- raw sensor traffic,
+- network reliability,
+- and user-visible dashboard behavior.
 
 ---
 
-# 6. Metrics Collected
+## 4. Original proposal direction
 
-The system measures the following metrics:
+The proposal defines Agrasandhani as an **MQTT-based smart gateway** that studies how sensor streams should be cleaned and summarized before delivery to a dashboard. The proposed design includes:
 
-1. **End-to-End Latency**
+- hybrid time/size batching,
+- message-ID deduplication,
+- latest-per-sensor compaction within batches,
+- adaptive publish-rate control,
+- and last-known-good dashboard semantics with freshness/age indicators and TTL. :contentReference[oaicite:2]{index=2}
 
-   * Sensor → Dashboard time
+The proposal also defines an evaluation structure based on:
+- multiple gateway variants,
+- MQTT QoS modes,
+- deterministic impairment scenarios,
+- and metrics such as latency, bandwidth usage, message rate, data loss, freshness, and update jitter. :contentReference[oaicite:3]{index=3}
 
-2. **Packet Delivery Ratio**
-
-   * Messages received / messages sent
-
-3. **Throughput**
-
-   * Messages per second delivered
-
-4. **Dashboard Frame Rate**
-
-   * Frames per second displayed on dashboard
-
-5. **Recovery Time After Outage**
-
-   * Time for system to return to normal after outage
+In other words, the proposal is already clearly a **systems evaluation project**, not just an application build.
 
 ---
 
-# 7. Main Figure of the Paper
+## 5. Changes after professor feedback
 
-The **primary evaluation figure** is:
+After discussion with the professor, the project direction became more focused and more consistent with a clean systems architecture.
 
-> **Downstream Frame Rate Over Time During Outage: V0 vs V2 vs V4**
+### 5.1 MQTT should remain between sensors and the smart gateway
+The notes make it clear that MQTT should stay on the **sensor side** of the architecture:
 
-This figure shows:
+- sensors publish through an MQTT broker,
+- the smart gateway subscribes and processes those updates.
 
-* Time vs Dashboard Frame Rate
-* Outage period marked
-* Comparison between batching strategies
-* Shows which system maintains visualization best during outages
+This preserves MQTT as the ingest protocol and keeps the project grounded in IoT/pub-sub semantics.
 
-This is the **main result** of the paper.
+### 5.2 The dashboard path should use WebSockets, not MQTT
+The professor suggested that the path from the smart gateway to the dashboard should use **WebSockets instead of MQTT**.
 
----
+That changes the project in an important way:
+- the dashboard no longer directly participates in the MQTT stream,
+- the gateway becomes the entity that transforms and presents data to the visualization layer.
 
-# 8. Datasets Used
+This shift makes the dashboard more clearly a **consumer of processed, visualization-oriented state**, not a raw MQTT subscriber.
 
-Two real-world datasets are used to simulate IoT sensors, and both are implemented in preprocessing, replay, and report evidence paths.
+### 5.3 The smart gateway and backend should be merged
+The notes also indicate that the “smart gateway” and the “backend” should effectively be treated as one combined component.
 
-## Dataset 1 — Array of Things (Chicago)
+This means the project should be understood as a unified system where the gateway:
+- ingests MQTT sensor traffic,
+- performs stream shaping / analysis,
+- and serves processed output to the dashboard.
 
-* Environmental sensors
-* Temperature
-* Humidity
-* Air quality
-* Pressure
-* Light
-* Noise
+### 5.4 The project should use realistic sensor sources
+The meeting notes suggest using:
+- **Array of Things** data,
+- and another environmental/temperature-oriented dataset.
 
-Used as a portability and validation dataset in the final evaluation pipeline.
+This pushes the project away from being purely synthetic and toward a more credible replay-based study using realistic sensor traces.
 
-## Dataset 2 — Intel Berkeley Lab Deployment Data
+### 5.5 The paper should include broader pub/sub context
+The professor explicitly suggested reading and discussing:
+- **Kafka**
+- **RabbitMQ**
+- and architectures like **Senselet++**
 
-A second real-world dataset is used as the primary workload for the final matrix:
+This does **not** mean implementing those systems. It means the project should position MQTT and Agrasandhani within a broader message-system and sensor-platform context.
 
-* Intel Lab sensor deployment readings
-* Time-series telemetry replayed through the same normalized simulator schema
-* Used for the primary clean and impairment scenario matrix
+### 5.6 Emulation should be explicit
+The meeting notes suggest placing some kind of process/thread/emulation layer in the data path to:
+- delay messages,
+- drop messages,
+- and induce behavior.
 
-Both datasets are **preprocessed and replayed through a sensor simulator** that publishes MQTT messages.
-
-No additional temperature-only dataset is used in the tracked final evidence.
-
----
-
-# 9. System Components Already Implemented
-
-The following components are already built:
-
-| Component                         | Status               |
-| --------------------------------- | -------------------- |
-| Dataset preprocessing             | Done                 |
-| Sensor simulator                  | Done                 |
-| MQTT publisher                    | Done                 |
-| MQTT broker                       | Done                 |
-| Smart gateway                     | Done                 |
-| WebSocket dashboard pipeline      | Done                 |
-| Impairment harness                | Done                 |
-| Outage simulation                 | Done                 |
-| Automated experiment sweep runner | Done                 |
-| Metrics collection                | Done                 |
-| Analysis pipeline                 | Done                 |
-| Plot generation                   | Done                 |
-| Live demo harness                 | Done                 |
-| Automated test suite              | Done                 |
-| Reproducibility documentation     | Done                 |
-| Final experiment runs             | Done (April 3, 2026) |
-
-This means the project is in **final research / paper polishing stage**, not development stage.
+This reinforces that the project should not merely mention impairment abstractly, but should treat it as a deliberate and controlled part of the evaluation methodology.
 
 ---
 
-# 10. Experiment Methodology
+## 6. The final conceptual architecture
 
-Each experiment run:
+At the level of project understanding, the final architecture is:
 
-1. Start MQTT broker
-2. Start impairment harness
-3. Start smart gateway
-4. Start dashboard
-5. Start sensor simulator
-6. Apply impairment (loss / delay / bandwidth / outage)
-7. Run for fixed duration
-8. Log:
+**Sensor source / dataset replay → MQTT broker → smart gateway → WebSocket-based dashboard**
 
-   * Sent messages
-   * Received messages
-   * Latency
-   * Frame rate
-   * Throughput
-9. Repeat for:
+That architecture captures the professor’s changes and the proposal’s core goals:
 
-   * V0
-   * V2
-   * V4
-10. Automated sweep runs all combinations
-11. Analysis pipeline generates plots
+- MQTT is still central to the ingest path,
+- the gateway is the research object,
+- and the dashboard receives processed data in a form suited for real-time visualization.
+
+The gateway is therefore the bridge between:
+- **raw pub/sub telemetry**
+and
+- **user-facing visual state**
+
+For the evaluated impairment runs, degradations are injected primarily on the **gateway-to-dashboard last hop** through the impairment proxy (with optional host-level `tc netem` shaping in the same last-hop context). The bandwidth and frame-count evidence in the report comes from proxy downstream metrics, not from impairment injected on the broker-to-gateway ingest link.
 
 ---
 
-# 11. Related Systems (For Paper Discussion)
+## 7. What the project is evaluating
 
-The project also studies other pub/sub systems conceptually for related work:
+The project is ultimately about evaluating **how gateway policies affect user-visible behavior** under normal and degraded conditions.
 
-| System                | Type                          |
-| --------------------- | ----------------------------- |
-| MQTT                  | Lightweight IoT pub/sub       |
-| Kafka                 | Distributed event streaming   |
-| RabbitMQ              | Message broker                |
-| Senselet / Senselet++ | Sensor architecture reference |
+### The main comparison structure
+The proposal defines an ablation ladder of variants:
+- naive forwarding,
+- batching,
+- batching plus compaction/deduplication,
+- adaptive publish-rate control,
+- and last-known-good dashboard semantics. :contentReference[oaicite:4]{index=4}
 
-These are **not fully implemented**, but discussed in **Related Work** section of the paper.
+This is important because the project is not only asking:
+> “Does the full system work?”
 
----
+It is also asking:
+> “Which mechanism actually contributes to which outcome?”
 
-# 12. Emulation / Impairment System
+### The main dimensions of evaluation
+The project studies trade-offs among:
+- communication volume,
+- latency,
+- dashboard update behavior,
+- freshness/staleness,
+- and resilience under degraded conditions.
 
-The impairment harness simulates bad network conditions by:
+### The intended degradation scenarios
+The proposal and meeting notes together make clear that the system should be studied under conditions such as:
+- packet loss,
+- delay,
+- jitter,
+- bandwidth caps,
+- short outages.
 
-* Dropping packets randomly
-* Adding delay
-* Limiting bandwidth
-* Creating outage periods
-* Delaying MQTT messages before reaching gateway
-
-This allows controlled experiments.
-
----
-
-# 13. What This Project Is (Important)
-
-This project is a combination of:
-
-| Area                | Contribution                |
-| ------------------- | --------------------------- |
-| IoT                 | Sensor data pipeline        |
-| Networking          | Impairments and reliability |
-| Distributed Systems | Pub/Sub architecture        |
-| Multimedia Systems  | Real-time visualization     |
-| Systems Research    | Performance evaluation      |
-
-This is **not just a dashboard**.
-This is **a reliability and performance study of an IoT streaming system**.
+These are not edge cases in the project. They are central to what the project is about.
 
 ---
 
-# 14. Repository Expectations
+## 8. The user-facing perspective of the project
 
-The repository should contain:
+One of the most important parts of Agrasandhani is that it takes the dashboard seriously as a **human-facing system**.
 
-```
-/datasets
-/preprocessing
-/simulator
-/mqtt
-/gateway
-/websocket
-/dashboard
-/impairment
-/experiments
-/analysis
-/paper
-/figures
-/tests
-/reproducibility
-README.md
-PROJECT_CONTEXT.md
-PRD.md
-```
+The proposal emphasizes that many existing approaches optimize traffic reduction or protocol behavior but do not fully account for:
+- how stable the display feels,
+- how old the shown value becomes,
+- how often the view changes,
+- and what the user actually experiences when the last hop degrades. :contentReference[oaicite:5]{index=5}
 
----
+That means the project should always be interpreted through two lenses at once:
 
-# 15. Reproducibility Requirements
+### Systems lens
+- pub/sub reliability,
+- batching,
+- stream shaping,
+- controlled impairment,
+- protocol behavior.
 
-The project must be reproducible by running:
+### Human-visible lens
+- stable display,
+- freshness,
+- continuity during outages,
+- reduced flicker / overload,
+- better interpretability of the shown state.
 
-1. Dataset preprocessing
-2. Start broker
-3. Start impairment harness
-4. Start gateway
-5. Run experiment sweep
-6. Generate plots
-7. Build paper figures
-
-Scripts should be provided for:
-
-* Running experiments
-* Generating figures
-* Reproducing paper results
+This dual framing is a major part of what makes the project appropriate for CS 537 rather than just a general networking or backend systems assignment.
 
 ---
 
-# 16. Final Deliverables
+## 9. The intended datasets and why they matter
 
-The final deliverables are:
+The meeting notes specifically mention:
+- **Array of Things**
+- and another temperature/environment-style source
 
-| Deliverable                   | Description                   |
-| ----------------------------- | ----------------------------- |
-| Working system                | End-to-end pipeline           |
-| Experiment results            | Metrics and plots             |
-| Main figure                   | Frame rate during outage      |
-| Research paper                | Describing system and results |
-| Reproducibility documentation | How to rerun experiments      |
-| Demo                          | Live dashboard                |
+The earlier context also identifies:
+- **Array of Things (Chicago)** as an environmental dataset,
+- and **Intel Berkeley Lab sensor data** as a second real-world telemetry source.
+
+The important contextual point is not the exact preprocessing pipeline, but **why** these datasets matter:
+
+- They make the project more realistic than using entirely fabricated traffic.
+- They give the sensor stream natural variation and heterogeneity.
+- They support the argument that Agrasandhani is being evaluated on plausible IoT-style workloads.
+
+So the project should be understood as working with **real-world inspired or real-world replayed sensor data**, not only toy message streams.
 
 ---
 
-# 17. One-Sentence Project Summary
+## 10. What this project is not
 
-> Agrasandhini is a smart gateway system that uses MQTT to stream IoT sensor data to a real-time dashboard, and this project evaluates how batching and gateway design affect reliability and visualization performance under network impairments such as packet loss, delay, bandwidth limits, and outages.
+To avoid future confusion, Agrasandhani should **not** be understood as any of the following:
 
----.
+### Not just a dashboard project
+The dashboard is part of the evaluation surface, but the main contribution is the **gateway behavior under impairment**.
+
+### Not just an MQTT demo
+MQTT is the protocol context, but the research question is not merely “how to use MQTT.”
+
+### Not a Kafka or RabbitMQ implementation project
+Those systems belong in related work and conceptual comparison, not as implementation targets.
+
+### Not a generic bandwidth-reduction-only project
+The original intuition may have involved traffic reduction, but the true project scope is broader:
+- communication shaping,
+- stability,
+- freshness,
+- and reliability/continuity under degradation.
+
+### Not a pure protocol paper
+The project is end-to-end and includes what the dashboard ultimately sees, not only broker or transport behavior.
+
+---
+
+## 11. What the final paper should feel like
+
+The final report should read like a **small systems paper** centered on a gateway design and its trade-offs.
+
+It should communicate:
+
+1. **The problem**
+   - naive sensor forwarding is fragile for real-time dashboards
+
+2. **The system idea**
+   - a smart MQTT-based gateway that reshapes the stream before visualization
+
+3. **The architectural refinement**
+   - MQTT on the ingest side, WebSockets on the dashboard side
+
+4. **The comparison structure**
+   - variants that isolate batching, compaction, adaptation, and state retention
+
+5. **The evaluation setting**
+   - realistic sensor traces and controlled network impairments
+
+6. **The core trade-offs**
+   - timeliness vs stability
+   - communication volume vs visualization continuity
+   - freshness vs graceful degradation
+
+7. **The broader context**
+   - where MQTT fits relative to pub/sub systems like Kafka and RabbitMQ
+   - how this work relates to edge/fog data reduction and sensor architectures like Senselet++
+
+---
+
+## 12. Working project summary
+
+Agrasandhani is a **research project on smart gateway behavior for IoT sensor visualization**.
+
+It studies how an MQTT-based gateway can reshape bursty sensor streams before they reach a real-time dashboard, with a focus on:
+- batching,
+- deduplication/compaction,
+- adaptive behavior,
+- state retention,
+- and controlled impairment scenarios such as loss, delay, bandwidth limits, and outages.
+
+The project’s defining question is not simply whether data can be delivered, but how the **displayed sensor state remains stable, timely, and interpretable** when the network is imperfect.
+
+That is the central context any future agent should preserve.
