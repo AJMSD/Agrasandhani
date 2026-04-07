@@ -101,18 +101,34 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("| clean | v2 | 9800 | 13800 | 40.8% |", bandwidth_table)
             qos_table = (output_dir / "tables" / "intel_qos_comparison.md").read_text(encoding="utf-8")
             self.assertIn("| clean | v0 |", qos_table)
+            self.assertIn("| qos0_latency_mean_ms |", qos_table)
+            self.assertIn("| qos0_latency_p50_ms |", qos_table)
             self.assertIn("| qos0_latency_p95_ms |", qos_table)
+            self.assertIn("| qos0_latency_p99_ms |", qos_table)
+            self.assertIn("qos1_latency_mean_ms", qos_table)
+            self.assertIn("qos1_latency_p50_ms", qos_table)
+            self.assertIn("qos1_latency_p95_ms", qos_table)
+            self.assertIn("qos1_latency_p99_ms", qos_table)
             self.assertIn("gateway_mqtt_in_msgs_delta_pct", qos_table)
             condensed_table = (output_dir / "tables" / "intel_condensed_summary.md").read_text(encoding="utf-8")
             self.assertIn("| variant | scenario | mqtt_qos |", condensed_table)
             self.assertIn("| v0 | clean | 0 |", condensed_table)
             self.assertIn("| v2 | bandwidth_200kbps | 0 |", condensed_table)
+            self.assertIn("latency_mean_ms", condensed_table)
+            self.assertIn("latency_p50_ms", condensed_table)
             self.assertIn("stale_fraction", condensed_table)
+            main_summary_table = (output_dir / "tables" / "intel_main_summary_table.md").read_text(encoding="utf-8")
+            self.assertIn("Latency mean", main_summary_table)
+            self.assertIn("Latency p50", main_summary_table)
+            self.assertIn("Latency p95", main_summary_table)
+            self.assertIn("Latency p99", main_summary_table)
             freshness_table = (output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").read_text(encoding="utf-8")
             self.assertIn("| v0 |", freshness_table)
             self.assertIn("| v4 |", freshness_table)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
             self.assertIn("did not show a downstream payload-byte reduction versus V0", final_report)
+            self.assertIn("### 2.1 Latency metrics", final_report)
+            self.assertIn("four latency summaries", final_report)
             self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)
             self.assertIn("intel_outage_qos1_bandwidth_over_time.png", final_report)
             self.assertIn("should not be read as evidence of a payload-byte reduction", final_report)
@@ -248,7 +264,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v2_batch_window_tradeoff.png").exists())
             tradeoff_table = (output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").read_text(encoding="utf-8")
-            self.assertIn("| 50 | 120.0 | 90.0 | 12 | 40 | 13100 | 1310 | 0.0 |", tradeoff_table)
+            self.assertIn("latency_mean_ms", tradeoff_table)
+            self.assertIn("latency_p50_ms", tradeoff_table)
+            self.assertIn("latency_p95_ms", tradeoff_table)
+            self.assertIn("latency_p99_ms", tradeoff_table)
+            self.assertIn("| 50 | 90.0 | 88.0 | 120.0 | 140.0 | 12 | 40 | 13100 | 1310 | 0.0 |", tradeoff_table)
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("Intel V2 batch-window sweep moved latency p95", key_claims)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
@@ -335,7 +355,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v1_vs_v2_isolation.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v1_vs_v2_isolation.png").exists())
             isolation_table = (output_dir / "tables" / "intel_v1_vs_v2_isolation.md").read_text(encoding="utf-8")
-            self.assertIn("| clean | 50 | 90.0 | 80.0 | -10.0 | 18 | 10 | -44.4% | 15100 | 14000 | -7.3% |", isolation_table)
+            self.assertIn("v1_latency_mean_ms", isolation_table)
+            self.assertIn("v1_latency_p50_ms", isolation_table)
+            self.assertIn("v2_latency_mean_ms", isolation_table)
+            self.assertIn("v2_latency_p99_ms", isolation_table)
+            self.assertIn("| clean | 50 | 70.0 | 68.0 | 90.0 | 110.0 | 60.0 | 58.0 | 80.0 | 100.0 |", isolation_table)
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("Intel V1 versus V2 isolation sweep shows what compaction changes beyond batching alone", key_claims)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
@@ -458,7 +482,11 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v2_vs_v3_adaptive_impairment.png").exists())
             adaptive_table = (output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").read_text(encoding="utf-8")
-            self.assertIn("| bandwidth_200kbps | 260.0 | 240.0 | -20.0 | 0.05 | 0.02 | -0.03 | 30 | 26 | -13.3% | 15 | 12 | -20.0% | 13500 | 12900 | -4.4% | 250 | 250 | 250 | 450 | 2 | 0 | degrade:queue_depth=30 |", adaptive_table)
+            self.assertIn("v2_latency_mean_ms", adaptive_table)
+            self.assertIn("v2_latency_p50_ms", adaptive_table)
+            self.assertIn("v3_latency_mean_ms", adaptive_table)
+            self.assertIn("v3_latency_p99_ms", adaptive_table)
+            self.assertIn("| bandwidth_200kbps | 235.0 | 233.0 | 260.0 | 280.0 | 215.0 | 213.0 | 240.0 | 260.0 |", adaptive_table)
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("Intel V2 versus V3 adaptive sweep shows what adaptive batching changed under impairment", key_claims)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
@@ -486,6 +514,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             "variant": variant,
             "scenario": scenario,
             "mqtt_qos": mqtt_qos,
+            "latency_mean_ms": latency_p95 - 2,
+            "latency_p50_ms": latency_p95 - 4,
             "latency_p95_ms": latency_p95,
             "latency_p99_ms": latency_p95 + 20,
             "proxy_downstream_frames_out": frames,
@@ -541,6 +571,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             "variant": variant,
             "scenario": scenario,
             "mqtt_qos": mqtt_qos,
+            "latency_mean_ms": latency_p95 - 3,
+            "latency_p50_ms": latency_p95 - 5,
             "latency_p95_ms": latency_p95,
             "latency_p99_ms": latency_p95 + 15,
             "proxy_downstream_frames_out": frames,
@@ -596,6 +628,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             "variant": "v2",
             "scenario": "clean",
             "mqtt_qos": 0,
+            "latency_p50_ms": latency_mean - 2,
             "latency_mean_ms": latency_mean,
             "latency_p95_ms": latency_p95,
             "latency_p99_ms": latency_p95 + 20,
@@ -628,6 +661,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             "scenario": scenario,
             "mqtt_qos": 0,
             "latency_mean_ms": latency_p95 - 20,
+            "latency_p50_ms": latency_p95 - 22,
             "latency_p95_ms": latency_p95,
             "latency_p99_ms": latency_p95 + 20,
             "proxy_downstream_frames_out": frames,
@@ -665,6 +699,7 @@ class BuildReportAssetsTests(unittest.TestCase):
             "scenario": scenario,
             "mqtt_qos": 0,
             "latency_mean_ms": latency_p95 - 25,
+            "latency_p50_ms": latency_p95 - 27,
             "latency_p95_ms": latency_p95,
             "latency_p99_ms": latency_p95 + 20,
             "proxy_downstream_frames_out": frames,

@@ -1,10 +1,10 @@
-| scenario | variant | baseline_downstream_bytes_out | variant_downstream_bytes_out | downstream_bytes_delta_pct | baseline_max_bandwidth_bytes_per_s | variant_max_bandwidth_bytes_per_s | max_bandwidth_delta_pct | baseline_downstream_frames_out | variant_downstream_frames_out | downstream_frames_delta_pct | latency_p95_ms |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clean | v2 | 12069 | 13051 | 8.1% | 3288 | 4228 | 28.6% | 132 | 5 | -96.2% | 269.0 |
-| clean | v4 | 12069 | 17641 | 46.2% | 3288 | 4590 | 39.6% | 132 | 6 | -95.5% | 682.0 |
-| bandwidth_200kbps | v2 | 12069 | 13051 | 8.1% | 4014 | 4228 | 5.3% | 132 | 5 | -96.2% | 263.9 |
-| bandwidth_200kbps | v4 | 12069 | 17641 | 46.2% | 4014 | 4590 | 14.3% | 132 | 6 | -95.5% | 604.0 |
-| loss_2pct | v2 | 11883 | 13051 | 9.8% | 3923 | 4228 | 7.8% | 130 | 5 | -96.2% | 269.0 |
-| loss_2pct | v4 | 11883 | 17641 | 48.5% | 3923 | 4590 | 17.0% | 130 | 6 | -95.4% | 586.0 |
-| outage_5s | v2 | 10605 | 11401 | 7.5% | 4014 | 4228 | 5.3% | 116 | 4 | -96.6% | 277.0 |
-| outage_5s | v4 | 10605 | 17641 | 66.3% | 4014 | 4590 | 14.3% | 116 | 6 | -94.8% | 579.0 |
+| scenario | variant | baseline_downstream_bytes_out | variant_downstream_bytes_out | downstream_bytes_delta_pct | baseline_max_bandwidth_bytes_per_s | variant_max_bandwidth_bytes_per_s | max_bandwidth_delta_pct | baseline_downstream_frames_out | variant_downstream_frames_out | downstream_frames_delta_pct | baseline_latency_mean_ms | baseline_latency_p50_ms | baseline_latency_p95_ms | baseline_latency_p99_ms | variant_latency_mean_ms | variant_latency_p50_ms | variant_latency_p95_ms | variant_latency_p99_ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean | v2 | 12069 | 13051 | 8.1% | 3288 | 4228 | 28.6% | 132 | 5 | -96.2% | 58.409 | 52.0 | 131.8 | 146.83 | 167.295 | 163.0 | 269.0 | 270.0 |
+| clean | v4 | 12069 | 17641 | 46.2% | 3288 | 4590 | 39.6% | 132 | 6 | -95.5% | 58.409 | 52.0 | 131.8 | 146.83 | 276.983 | 198.0 | 682.0 | 720.21 |
+| bandwidth_200kbps | v2 | 12069 | 13051 | 8.1% | 4014 | 4228 | 5.3% | 132 | 5 | -96.2% | 34.621 | 18.0 | 119.35 | 139.21 | 163.629 | 163.5 | 263.9 | 266.69 |
+| bandwidth_200kbps | v4 | 12069 | 17641 | 46.2% | 4014 | 4590 | 14.3% | 132 | 6 | -95.5% | 34.621 | 18.0 | 119.35 | 139.21 | 255.128 | 194.5 | 604.0 | 652.21 |
+| loss_2pct | v2 | 11883 | 13051 | 9.8% | 3923 | 4228 | 7.8% | 130 | 5 | -96.2% | 45.408 | 32.0 | 120.55 | 131.55 | 168.962 | 170.0 | 269.0 | 276.0 |
+| loss_2pct | v4 | 11883 | 17641 | 48.5% | 3923 | 4590 | 17.0% | 130 | 6 | -95.4% | 45.408 | 32.0 | 120.55 | 131.55 | 256.45 | 192.0 | 586.0 | 627.21 |
+| outage_5s | v2 | 10605 | 11401 | 7.5% | 4014 | 4228 | 5.3% | 116 | 4 | -96.6% | 41.466 | 31.5 | 112.25 | 121.85 | 158.0 | 153.5 | 277.0 | 279.0 |
+| outage_5s | v4 | 10605 | 17641 | 66.3% | 4014 | 4590 | 14.3% | 116 | 6 | -94.8% | 41.466 | 31.5 | 112.25 | 121.85 | 248.717 | 203.0 | 579.0 | 615.0 |

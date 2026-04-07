@@ -283,6 +283,46 @@ What `v4` did provide was a larger retained last-known-good state at the end of 
 
 `PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder update, regenerated tracked report assets, the reproducibility update, the refreshed report text, the test update, and this appended `report.md`.
 
+## MP6 Task 8 Session Report
+
+### Task Goal
+
+Align the paper-facing latency reporting with the metrics already computed by `experiments/analyze_run.py` by making the report assets explicit about mean, p50, p95, and p99, then regenerate the tracked report package and lock the contract with tests.
+
+### What Was Changed
+
+- Expanded `experiments/build_report_assets.py` so the paper tables now carry the full latency set consistently: mean, p50, p95, and p99.
+- Updated the rendered report narrative to include a dedicated latency-metrics subsection in `report/final_report.md` stating that p95 stays the headline metric while the other summaries remain visible in the tables.
+- Regenerated the tracked report assets so the main summary and condensed summary tables now show the complete latency set, and the related comparison tables also carry the same metric family.
+- Updated `tests/test_build_report_assets.py` so the new table contract is enforced by test, including the expanded latency columns and the report wording.
+- Updated `PROJECT_CHECKLIST.md` locally only so G4 is marked complete.
+
+### Commands Run
+
+```powershell
+& .\.venv\Scripts\python.exe -m unittest tests.test_build_report_assets
+& .\.venv\Scripts\python.exe experiments\build_report_assets.py --intel-sweep-dir experiments\logs\final-intel-primary-20260403 --aot-sweep-dir experiments\logs\final-aot-validation-20260403 --demo-dir experiments\logs\final-demo-20260403\demo --intel-batch-sweep-dir experiments\logs\intel-v2-batch-window-20260403 --intel-v1-v2-sweep-dir experiments\logs\intel-v1-v2-isolation-20260403 --intel-adaptive-sweep-dir experiments\logs\intel-v2-v3-adaptive-20260404 --output-dir report\assets
+& .\.venv\Scripts\python.exe -m unittest tests.test_build_report_assets
+```
+
+### Verification Results
+
+- `python -m unittest tests.test_build_report_assets` passed before and after regeneration.
+- The generated `report/final_report.md` now includes the latency-metrics subsection and explicitly states that the paper standardizes on mean, p50, p95, and p99.
+- The tracked summary tables now show the full latency family instead of p95 alone, so the paper no longer has a mismatch between what the analysis computes and what the narrative claims.
+
+### Analysis
+
+The important result here is not a new performance measurement; it is reporting alignment. `analyze_run.py` already computed mean, p50, p95, and p99, but the paper assets mostly surfaced p95 only. That left the report with a narrow claim surface that did not fully reflect the available statistics.
+
+After this update, the paper can make a clean statement: p95 remains the top-line latency comparison in the prose, but the underlying tables now expose the full distribution summary consistently. That reduces ambiguity for readers and makes the report easier to defend because the metric policy is explicit instead of implicit.
+
+The generated assets also remain internally consistent with the measured results. The tables continue to show the same tradeoffs as before, but now the latency summaries are presented in a way that matches the analysis pipeline end-to-end.
+
+### Commit And Push Note
+
+`PRD.md` and `PROJECT_CHECKLIST.md` remain local-only for this session and must not be staged or pushed. The push should contain the builder update, regenerated tracked report assets, the refreshed report text, the test update, and this appended `report.md`.
+
 ## MP6 Task 6 Session Report
 
 ### Task Goal

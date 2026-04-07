@@ -261,6 +261,15 @@ def _percent_delta(base: float, candidate: float) -> float | None:
     return ((candidate - base) / base) * 100
 
 
+def _latency_stats(row: dict[str, object], *, prefix: str = "latency") -> dict[str, float]:
+    return {
+        f"{prefix}_mean_ms": float(row["latency_mean_ms"]),
+        f"{prefix}_p50_ms": float(row["latency_p50_ms"]),
+        f"{prefix}_p95_ms": float(row["latency_p95_ms"]),
+        f"{prefix}_p99_ms": float(row["latency_p99_ms"]),
+    }
+
+
 def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for scenario in INTEL_BANDWIDTH_SCENARIOS:
@@ -289,7 +298,8 @@ def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> li
                         float(baseline["proxy_downstream_frames_out"]),
                         float(candidate["proxy_downstream_frames_out"]),
                     ),
-                    "latency_p95_ms": float(candidate["latency_p95_ms"]),
+                    **_latency_stats(baseline, prefix="baseline_latency"),
+                    **_latency_stats(candidate, prefix="variant_latency"),
                 }
             )
     return rows
@@ -308,7 +318,7 @@ def _build_intel_condensed_summary_rows(intel_rows: list[dict[str, object]]) -> 
                     "variant": variant,
                     "scenario": scenario,
                     "mqtt_qos": 0,
-                    "latency_p95_ms": float(source["latency_p95_ms"]),
+                    **_latency_stats(source),
                     "proxy_downstream_frames_out": int(source["proxy_downstream_frames_out"]),
                     "proxy_downstream_bytes_out": int(source["proxy_downstream_bytes_out"]),
                     "stale_fraction": float(source.get("stale_fraction", 0.0)),
@@ -332,7 +342,10 @@ def _build_intel_main_summary_rows(intel_rows: list[dict[str, object]]) -> list[
                     "Variant": variant.upper(),
                     "Downstream Frames": int(source["proxy_downstream_frames_out"]),
                     "Downstream Bytes": int(source["proxy_downstream_bytes_out"]),
+                    "Latency mean": float(source["latency_mean_ms"]),
+                    "Latency p50": float(source["latency_p50_ms"]),
                     "Latency p95": float(source["latency_p95_ms"]),
+                    "Latency p99": float(source["latency_p99_ms"]),
                     "Stale Fraction": float(source.get("stale_fraction", 0.0)),
                     "Scenario": scenario,
                 }
@@ -355,8 +368,8 @@ def _build_intel_qos_comparison_rows(intel_rows: list[dict[str, object]]) -> lis
                 {
                     "scenario": scenario,
                     "variant": variant,
-                    "qos0_latency_p95_ms": float(qos0_row["latency_p95_ms"]),
-                    "qos1_latency_p95_ms": float(qos1_row["latency_p95_ms"]),
+                    **{f"qos0_{key}": value for key, value in _latency_stats(qos0_row).items()},
+                    **{f"qos1_{key}": value for key, value in _latency_stats(qos1_row).items()},
                     "latency_p95_delta_ms": round(float(qos1_row["latency_p95_ms"]) - float(qos0_row["latency_p95_ms"]), 3),
                     "qos0_duplicates_dropped": int(qos0_row.get("duplicates_dropped", 0)),
                     "qos1_duplicates_dropped": int(qos1_row.get("duplicates_dropped", 0)),
@@ -440,8 +453,7 @@ def _build_intel_batch_window_tradeoff_rows(rows: list[dict[str, object]]) -> li
         tradeoff_rows.append(
             {
                 "batch_window_ms": batch_window_ms,
-                "latency_p95_ms": float(row["latency_p95_ms"]),
-                "latency_mean_ms": float(row["latency_mean_ms"]),
+                **_latency_stats(row),
                 "max_frame_rate_per_s": int(row["max_frame_rate_per_s"]),
                 "proxy_downstream_frames_out": int(row["proxy_downstream_frames_out"]),
                 "proxy_downstream_bytes_out": int(row["proxy_downstream_bytes_out"]),
@@ -509,8 +521,8 @@ def _build_intel_v1_v2_isolation_rows(rows: list[dict[str, object]]) -> list[dic
                 {
                     "scenario": scenario,
                     "batch_window_ms": batch_window_ms,
-                    "v1_latency_p95_ms": float(v1_row["latency_p95_ms"]),
-                    "v2_latency_p95_ms": float(v2_row["latency_p95_ms"]),
+                    **{f"v1_{key}": value for key, value in _latency_stats(v1_row).items()},
+                    **{f"v2_{key}": value for key, value in _latency_stats(v2_row).items()},
                     "latency_p95_delta_ms": round(float(v2_row["latency_p95_ms"]) - float(v1_row["latency_p95_ms"]), 3),
                     "v1_proxy_downstream_frames_out": int(v1_row["proxy_downstream_frames_out"]),
                     "v2_proxy_downstream_frames_out": int(v2_row["proxy_downstream_frames_out"]),
@@ -672,8 +684,8 @@ def _build_intel_adaptive_rows(rows: list[dict[str, object]]) -> list[dict[str, 
         comparison_rows.append(
             {
                 "scenario": scenario,
-                "v2_latency_p95_ms": float(v2_row["latency_p95_ms"]),
-                "v3_latency_p95_ms": float(v3_row["latency_p95_ms"]),
+                **{f"v2_{key}": value for key, value in _latency_stats(v2_row).items()},
+                **{f"v3_{key}": value for key, value in _latency_stats(v3_row).items()},
                 "latency_p95_delta_ms": round(float(v3_row["latency_p95_ms"]) - float(v2_row["latency_p95_ms"]), 3),
                 "v2_stale_fraction": float(v2_row.get("stale_fraction", 0.0)),
                 "v3_stale_fraction": float(v3_row.get("stale_fraction", 0.0)),
@@ -1316,6 +1328,10 @@ The project goal is to make bursty IoT replay traffic easier to visualize withou
 
 The primary evidence run is `{intel_sweep_dir.name}`. It uses a bounded slice of the Intel Berkeley Lab deployment data [@intelLabData] preprocessed into Agrasandhani's normalized replay schema, then runs `V0`, `V2`, and `V4` across `clean`, `bandwidth_200kbps`, `loss_2pct`, `delay_50ms_jitter20ms`, and `outage_5s` at MQTT QoS `0` and `1`. Each run uses a 30 second wall-clock replay, a 5x speedup, a 200-sensor target, and burst mode. The portability check is `{aot_sweep_dir.name}`, built from a bounded slice of the AoT weekly archive dataset [@aotCyberGIS] with a smaller validation matrix. The live demo evidence comes from `{demo_dir.parent.name}`.
 
+### 2.1 Latency metrics
+
+The paper standardizes on four latency summaries throughout the report assets: mean, p50, p95, and p99. p95 remains the headline comparison in the prose because it captures the high-end user-visible delay most directly, but the generated tables now carry the full set so the claims and metrics stay aligned with [experiments/analyze_run.py](../experiments/analyze_run.py).
+
 ## 3. Results
 
 The clean qos0 run shows the expected tradeoff. V0 preserves the most immediate delivery path with a p95 display latency of {clean_v0['latency_p95_ms']} ms, whereas V4 increases p95 latency to {clean_v4['latency_p95_ms']} ms in exchange for frame consolidation. This is visible in the latency CDF and the message-rate plots in [report/assets/figures/intel_clean_qos0_latency_cdf.png](assets/figures/intel_clean_qos0_latency_cdf.png) and [report/assets/figures/intel_outage_qos1_message_rate_over_time.png](assets/figures/intel_outage_qos1_message_rate_over_time.png).
@@ -1341,7 +1357,7 @@ The Intel qos0 outage freshness trace answers the fifth paper question directly.
 
 The Intel qos0 versus qos1 comparison answers the next paper-readiness question directly with a side-by-side table and figure. Across the Intel matrix (`v0`, `v2`, `v4` by `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s`), the measured exact duplicate-drop counter for qos1 stayed at {qos1_duplicates}. QoS1 versus QoS0 downstream bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')} for V0, {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')} for V2, and {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')} for V4. Latency p95 deltas are captured in the same table so the paper can make a bounded statement about observed setup-specific behavior rather than asserting broader reliability guarantees. The paper-ready outputs for this task are [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md) and [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png).
 
-The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency p95, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
+The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency mean, p50, p95, p99, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
 
 The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
 """
@@ -1539,7 +1555,14 @@ def build_report_assets(
             "baseline_downstream_frames_out",
             "variant_downstream_frames_out",
             "downstream_frames_delta_pct",
-            "latency_p95_ms",
+            "baseline_latency_mean_ms",
+            "baseline_latency_p50_ms",
+            "baseline_latency_p95_ms",
+            "baseline_latency_p99_ms",
+            "variant_latency_mean_ms",
+            "variant_latency_p50_ms",
+            "variant_latency_p95_ms",
+            "variant_latency_p99_ms",
         ],
     )
     _write_markdown_table(
@@ -1548,8 +1571,14 @@ def build_report_assets(
         columns=[
             "scenario",
             "variant",
+            "qos0_latency_mean_ms",
+            "qos0_latency_p50_ms",
             "qos0_latency_p95_ms",
+            "qos0_latency_p99_ms",
+            "qos1_latency_mean_ms",
+            "qos1_latency_p50_ms",
             "qos1_latency_p95_ms",
+            "qos1_latency_p99_ms",
             "latency_p95_delta_ms",
             "qos0_duplicates_dropped",
             "qos1_duplicates_dropped",
@@ -1576,7 +1605,10 @@ def build_report_assets(
             "variant",
             "scenario",
             "mqtt_qos",
+            "latency_mean_ms",
+            "latency_p50_ms",
             "latency_p95_ms",
+            "latency_p99_ms",
             "proxy_downstream_frames_out",
             "proxy_downstream_bytes_out",
             "stale_fraction",
@@ -1589,7 +1621,10 @@ def build_report_assets(
             "Variant",
             "Downstream Frames",
             "Downstream Bytes",
+            "Latency mean",
+            "Latency p50",
             "Latency p95",
+            "Latency p99",
             "Stale Fraction",
             "Scenario",
         ],
@@ -1601,8 +1636,10 @@ def build_report_assets(
             intel_batch_rows,
             columns=[
                 "batch_window_ms",
-                "latency_p95_ms",
                 "latency_mean_ms",
+                "latency_p50_ms",
+                "latency_p95_ms",
+                "latency_p99_ms",
                 "max_frame_rate_per_s",
                 "proxy_downstream_frames_out",
                 "proxy_downstream_bytes_out",
@@ -1619,8 +1656,14 @@ def build_report_assets(
             columns=[
                 "scenario",
                 "batch_window_ms",
+                "v1_latency_mean_ms",
+                "v1_latency_p50_ms",
                 "v1_latency_p95_ms",
+                "v1_latency_p99_ms",
+                "v2_latency_mean_ms",
+                "v2_latency_p50_ms",
                 "v2_latency_p95_ms",
+                "v2_latency_p99_ms",
                 "latency_p95_delta_ms",
                 "v1_proxy_downstream_frames_out",
                 "v2_proxy_downstream_frames_out",
@@ -1645,8 +1688,14 @@ def build_report_assets(
             intel_adaptive_rows,
             columns=[
                 "scenario",
+                "v2_latency_mean_ms",
+                "v2_latency_p50_ms",
                 "v2_latency_p95_ms",
+                "v2_latency_p99_ms",
+                "v3_latency_mean_ms",
+                "v3_latency_p50_ms",
                 "v3_latency_p95_ms",
+                "v3_latency_p99_ms",
                 "latency_p95_delta_ms",
                 "v2_stale_fraction",
                 "v3_stale_fraction",
