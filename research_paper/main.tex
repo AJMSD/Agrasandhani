@@ -31,11 +31,240 @@ A smart gateway can reshape what an IoT dashboard displays under degraded last-h
 
 \maketitle
 
-\input{Sections/introduction}
-\input{Sections/related-work}
-\input{Sections/approach}
-\input{Sections/evaluation}
-\input{Sections/actionplan}
+\section{Introduction}
+
+IoT dashboards are an operational interface rather than a passive sink for telemetry. When every sensor update is forwarded immediately, the browser-facing path inherits bursty arrival patterns, repeated redraws, and abrupt visibility gaps during connectivity faults. For an operator monitoring a live deployment, the relevant failure mode is therefore loss of interpretability at the dashboard, not simply loss of transport efficiency. That distinction is especially important when the impairment lies on the final gateway-to-dashboard hop, where the broker can remain healthy while the rendered view becomes erratic.
+
+This paper studies that dashboard-facing problem in the path \texttt{dataset replay $\rightarrow$ MQTT broker $\rightarrow$ smart gateway $\rightarrow$ WebSocket dashboard}. The central question is not whether a gateway can reduce traffic in the abstract, but whether it can trade immediacy for operator-visible stability in a controlled and measurable way. In this setting, stability means a paced downstream rendering stream with predictable behavior during outage and recovery, while freshness means how old the visible state is when the dashboard renders it.
+
+Agrasandhani addresses this question with a gateway that can batch sensor updates, compact each batch to the latest reading per sensor, optionally adapt its batch window, and expose last-known-good state with explicit age semantics. The empirical story that emerges is intentionally narrower than a generic optimization claim. The strongest measured effect is a large reduction in downstream frame cadence under last-hop impairment, especially during outage and recovery. That effect does not imply lower payload-byte volume, and it is accompanied by higher display latency and older visible state.
+
+The paper makes three bounded contributions:
+\begin{itemize}[leftmargin=*]
+  \item It quantifies the primary gateway trade-off under last-hop impairment: smart variants sharply reduce downstream frame cadence and produce a steadier dashboard stream, but they increase end-to-end latency.
+  \item It distinguishes continuity from freshness by showing that last-known-good state improves visible outage behavior while increasing the age of the displayed data.
+  \item It reports negative and mixed results explicitly: downstream payload bytes do not decrease in this setup, the adaptive controller does not materially outperform fixed-window batching, and the measured benefit beyond batching alone is limited.
+\end{itemize}
+
+Specifically, the paper tests whether gateway-side pacing and retained-state semantics improve dashboard stability under last-hop impairment, and what they cost in latency, freshness, and payload volume.
+
+\section{Related Work}
+
+Work on edge and fog data reduction consistently treats filtering, aggregation, and adaptation as lightweight mechanisms for reducing communication pressure without relocating the full analytics stack into the network. Surveys by Pioli et al.\ and Sadri et al.\ emphasize both the practical appeal of such mechanisms and the need for evaluations that report trade-offs explicitly rather than assuming universal gains \cite{pioli2022_edge_data_reduction_mapping,sadri2022_fog_data_reduction_survey}. Agrasandhani follows this line of work at the gateway layer, but evaluates the policies against dashboard-facing outcomes: downstream frame cadence, display latency, and visible age under last-hop impairment.
+
+MQTT-specific work motivates the treatment of delivery semantics, duplicates, and freshness. The MQTT 3.1.1 specification distinguishes QoS~0 and QoS~1 delivery guarantees, and Kovalchuk et al.\ note that at-least-once delivery can require application-side handling of duplicate messages \cite{mqtt311,kovalchuk2018_mqtt_architecture_delay}. Palmese et al.\ argue for adaptation under changing network conditions, while Yates et al.\ frame freshness as an explicit observer-side property rather than a by-product of throughput \cite{palmese2022_adaptive_qos_mqttsn,yates2021_age_of_information_survey}. These ideas align with Agrasandhani's batch-window control, compaction, and age-aware dashboard semantics, even though the measured adaptive result here remains negative under the tested thresholds.
+
+Methodologically, the paper is closer to controlled impairment studies than to open-ended deployment measurement. Jurgelionis et al.\ and Garcia and Hurtig argue that deterministic impairment is valuable because protocol and application behavior can then be compared under repeatable degradations \cite{jurgelionis2011_netem_empirical,garcia2016_kaunetem_netdev}. Agrasandhani adopts that methodological stance by using a deterministic application-layer impairment proxy on the gateway-to-dashboard path and by reporting proxy-side outputs as the canonical source of truth for dashboard-facing stability.
+
+\section{System Design}
+
+\subsection{End-to-End Pipeline}
+
+Agrasandhani is an end-to-end MQTT pipeline that treats sensor updates as a stream to be reshaped before browser delivery. The system has four components: a dataset replay publisher that emits normalized sensor messages; a Mosquitto broker that carries MQTT QoS~0 or QoS~1 traffic; a gateway that transforms the stream; and a WebSocket dashboard backend that exposes the latest sensor state to the browser. Replay messages carry \texttt{sensor\_id}, \texttt{metric\_type}, \texttt{msg\_id}, and \texttt{ts\_sent}, which are sufficient to measure end-to-end latency and to compare downstream behavior across gateway policies. Figure~\ref{fig:architecture} shows the measured path.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/approach-cs537.png}
+  \Description{System architecture showing dataset replay feeding an MQTT broker, a smart gateway, and a WebSocket dashboard backend that drives the browser-facing dashboard.}
+  \caption{Agrasandhani end-to-end pipeline.}
+  \label{fig:architecture}
+\end{figure}
+
+\subsection{Gateway Policies}
+
+The gateway policy ladder spans V0 through V4. V0 forwards every message immediately and serves as the baseline. V1 introduces hybrid time/size batching. V2 keeps batching and compacts each batch to the latest update per sensor, while also exposing duplicate-sensitive accounting. V3 preserves V2's compaction logic and allows the effective batch window to change in response to queue depth and send-time signals. V4 builds on V2 by exposing last-known-good dashboard state with explicit freshness semantics and TTL-based staleness marking.
+
+The main comparison focuses on V0, V2, and V4. V2 captures the primary pacing mechanism without last-known-good retention. V4 shows the additional continuity behavior created by retaining visible state through outage. V1 and V3 remain important as supporting ablations because they isolate the incremental effect of batching and adaptation beyond the main claim-carrying comparison.
+
+The main-matrix smart variants use a 250\,ms base batch window and a 1000\,ms freshness TTL. For V3, the adaptive controller may vary the effective batch window between 10\,ms and 1000\,ms, increasing it by 100\,ms when queue depth or send time crosses threshold and decreasing it by 50\,ms after sustained healthy flushes. These defaults matter because the supporting adaptive analysis shows that, under the evaluated impairments, the controller rarely finds evidence strong enough to move off the 250\,ms operating point.
+
+\subsection{Measurement Boundary}
+
+Impairments are injected primarily on the gateway-to-dashboard last hop through the application-layer impairment proxy, with optional host-level shaping available in the same context. This distinction matters because the reported downstream frame and byte metrics are measured at the proxy output. The central claims therefore concern what the dashboard-facing path emits and displays rather than generic broker-link throughput. MQTT still matters for ingest semantics and QoS handling, especially when reasoning about duplicate-sensitive behavior, but the research object is the gateway's effect on the visualization stream seen by the operator.
+
+\section{Experimental Setup and Metrics}
+
+\subsection{Workloads and Trial Matrix}
+
+The primary evidence source is the replicated Intel sweep root \nolinkurl{final-intel-primary-replicated-20260408-135251}. It uses a bounded slice of the Intel Berkeley Research Lab deployment data \cite{intelLabData}, normalized into Agrasandhani's replay schema. The slice contains 4{,}320 replay rows drawn from 54 sensors. The primary matrix compares V0, V2, and V4 under MQTT QoS~0 and QoS~1 across five scenarios: \nolinkurl{clean}, \nolinkurl{bandwidth_200kbps}, \nolinkurl{loss_2pct}, \nolinkurl{delay_50ms_jitter20ms}, and \nolinkurl{outage_5s}. Each Intel condition is replicated three times with shared impairment seeds (\nolinkurl{53701}, \nolinkurl{53702}, and \nolinkurl{53703}) so the variants experience the same randomized impairments.
+
+The portability check is the replicated AoT sweep root \nolinkurl{final-aot-validation-replicated-20260408-135251}, derived from a bounded Array of Things slice \cite{aotCyberGIS}. That validation slice contains 520 normalized rows drawn from 36 sensors. The AoT matrix is intentionally smaller: it compares V0 and V4 under QoS~0 for the clean and outage scenarios with two trials per condition. The AoT results are therefore treated as a directional consistency check rather than as a second primary claim source.
+
+The replay harness accelerates both workloads by 5$\times$. Intel runs use a 30\,s wall-clock replay window, a 200-sensor target, and burst mode; AoT uses a 20\,s wall-clock replay window and a 50-sensor target. Unless otherwise noted, in-body table values are condition means across replicated trials. Supporting ablations use the packaged replicated sweep roots for the V2 batch-window sweep, the V1 versus V2 isolation sweep, the V2 versus V3 adaptive comparison, and the V3 parameter sweep.
+In the QoS~0 headline matrix, the clean, bandwidth-capped, and outage frame-count patterns repeated exactly across trials, while the lossy case varied only at the one-frame level and preserved the same large gap between V0 and the smart variants.
+
+The supporting sweeps are narrower by design. The V2 batch-window study varies only the fixed batch window while keeping the clean Intel workload and QoS~0 constant. The V1 versus V2 isolation sweep compares batching alone against batching plus compaction under matched batch windows for the clean, bandwidth-capped, and outage scenarios. The adaptive studies reuse the same Intel workload to compare V2 and V3 directly and then expand to a parameter grid over the send-slow threshold, the step-up increment, and the maximum adaptive window. These sweeps are used to interpret mechanism-level behavior, not to replace the primary Intel matrix.
+
+\subsection{Impairment Model and Metrics}
+
+Impairments are applied on the gateway-to-dashboard hop through the deterministic application-layer proxy. The clean scenario applies no impairment. The bandwidth-capped scenario limits the hop to 200\,kbps. The loss scenario injects 2\% packet loss. The delay/jitter scenario applies 50\,ms delay with 20\,ms jitter. The outage profile is phase-based, with 10\,s of steady delivery, a 5\,s complete outage, and a 45\,s recovery interval. The repository also includes optional host-level \texttt{tc netem} support, but the results reported here are grounded in the proxy-side impairment path and its outputs.
+
+Latency is measured as \texttt{ts\_displayed - ts\_sent} and summarized with mean, p50, p95, and p99. Downstream traffic is measured at the impairment proxy as emitted frames and payload bytes. Freshness is interpreted as dashboard age of information. The canonical stability metric is the proxy inter-frame gap, together with proxy frame-rate variability; dashboard row cadence is not treated as a frame clock because the browser records only rendered events. For outage analysis, age over time is more informative than stale fraction alone because idle stale transitions are not sampled when the dashboard does not render new rows.
+
+\section{Results}
+
+\subsection{Primary Intel Results}
+
+\begin{figure*}[t]
+	\centering
+	\includegraphics[width=\linewidth]{assets/main_outage_frame_rate.png}
+	\Description{A time-series plot of downstream frame rate during the Intel QoS0 outage scenario. The V0 baseline shows repeated bursts before and after the outage, whereas V2 and V4 remain at a much lower cadence through outage and recovery.}
+	\caption{Downstream frame rate during the Intel \texttt{outage\_5s} QoS~0 condition. V0 remains bursty through outage and recovery, while V2 and V4 stay much lower and steadier.}
+	\label{fig:main-outage-frame-rate}
+\end{figure*}
+
+\begin{table}[t]
+\centering
+\caption{Primary Intel summary (QoS~0, means across three replicated trials).}
+\label{tab:main-summary}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lrr>{\raggedleft\arraybackslash}p{0.16\columnwidth}>{\raggedright\arraybackslash}p{0.26\columnwidth}@{}}
+\toprule
+Variant & Frames & Bytes & \makecell[r]{Latency p95\\(ms)} & Scenario \\
+\midrule
+V0 & 132 & 12069 & 31.9 & clean \\
+V2 & 5 & 13051 & 276.2 & clean \\
+V4 & 6 & 17641 & 607.7 & clean \\
+V0 & 132 & 12069 & 121.5 & \nolinkurl{bandwidth_200kbps} \\
+V2 & 5 & 13051 & 271.5 & \nolinkurl{bandwidth_200kbps} \\
+V4 & 6 & 17641 & 573.7 & \nolinkurl{bandwidth_200kbps} \\
+V0 & 128 & 11725 & 115.7 & \nolinkurl{loss_2pct} \\
+V2 & 4 & 12129 & 267.0 & \nolinkurl{loss_2pct} \\
+V4 & 5 & 16845 & 546.0 & \nolinkurl{loss_2pct} \\
+V0 & 116 & 10605 & 119.8 & \nolinkurl{outage_5s} \\
+V2 & 4 & 11401 & 279.1 & \nolinkurl{outage_5s} \\
+V4 & 6 & 17641 & 541.7 & \nolinkurl{outage_5s} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+The strongest measured effect is downstream cadence reduction under last-hop impairment. Table~\ref{tab:main-summary} shows that across the four headline Intel QoS~0 scenarios, V0 emits between 116 and 132 downstream frames, whereas V2 and V4 emit between 4 and 6. Figure~\ref{fig:main-outage-frame-rate} illustrates the result most clearly in the outage case. During the five-second outage, V0 emits 116 downstream frames, V2 emits 4, and V4 emits 6, corresponding to an approximately 95--97\% reduction in downstream frame cadence. The gateway therefore reshapes a bursty dashboard stream into a paced sequence of aggregate updates.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/intel_clean_qos0_latency_cdf.png}
+  \Description{A cumulative distribution of end-to-end display latency for the Intel QoS0 clean condition. The V0 curve rises quickly at low latency, while the V2 and V4 curves are shifted to the right, indicating substantially higher display delay.}
+  \caption{Clean-path latency CDF for Intel QoS~0. Smarter variants paced the stream but increased display latency relative to V0.}
+  \label{fig:latency-cdf}
+\end{figure}
+
+The same mechanism imposes a substantial latency cost. Figure~\ref{fig:latency-cdf} and Table~\ref{tab:main-summary} show the clean-path trade-off: V0 reaches 31.9\,ms p95 latency, V2 reaches 276.2\,ms, and V4 reaches 607.7\,ms. That cost persists under impairment, so the positive result is paced rendering rather than faster delivery.
+
+The bandwidth-capped case makes the mechanism more specific. Relative to clean, the 200\,kbps cap raises V0 p95 latency by 89.6\,ms, but leaves V2 and V4 within 35\,ms of their clean-path p95 values because those variants already throttle the downstream cadence before the impaired hop. The cap therefore hurts the raw stream more than the paced stream, even though the paced variants still send at least as many downstream payload bytes as V0.
+The delay/jitter condition is interpreted in text and Figure~\ref{fig:inter-frame-gap-cdf}, rather than added to the condensed primary Intel table, because its main value is the shape of proxy timing variation rather than another row of the same frame-count contrast.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/intel_delay_qos0_inter_frame_gap_cdf.png}
+  \Description{A cumulative distribution of proxy inter-frame gaps for the Intel QoS0 delay and jitter scenario. The V0 baseline emits many closely spaced frames, while V2 and V4 shift the distribution toward far larger gaps because the gateway sends aggregated updates.}
+  \caption{Proxy inter-frame-gap CDF for Intel QoS~0 under delay and jitter. The smart variants pace the dashboard stream by emitting far fewer downstream frames.}
+  \label{fig:inter-frame-gap-cdf}
+\end{figure}
+
+The proxy-side stability metrics point in the same direction. In the Intel QoS~0 delay/jitter scenario, V0 has a proxy inter-frame-gap p95 of 79.8\,ms and a proxy frame-rate standard deviation of 3.81\,s$^{-1}$, while V2 and V4 emit at approximately one aggregate frame per effective batch window. The smart path therefore reduces visible burstiness by pacing the dashboard stream, not by making the impaired hop itself less variable.
+
+Delay and jitter expose a complementary effect. In \nolinkurl{delay_50ms_jitter20ms}, V0 latency p95 rises to 1838.4\,ms, whereas V2 and V4 remain at 324.7\,ms and 645.4\,ms while emitting only five and six downstream frames. The gateway does not remove timing variation from the path itself; instead, it converts a bursty raw stream into a low-rate downstream sequence whose visible latency grows far less sharply under per-packet timing disturbance.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/intel_outage_qos0_v0_vs_v4_age_over_time.png}
+  \Description{An age-of-information trace for the Intel QoS0 outage scenario comparing V0 and V4. V4 continues to display retained state during the outage, but its visible age remains much higher than the baseline both before and after recovery.}
+  \caption{Outage age trace for Intel QoS~0. V4 keeps visible state through the outage, but the retained state is older than V0's visible state before recovery.}
+  \label{fig:age-trace}
+\end{figure}
+
+V4 improves continuity rather than freshness. During the QoS~0 outage, V0 renders no updates while V4 renders 20 retained updates, allowing the dashboard to remain populated during the disruption. The visible state is older, however: pre-outage age p95 rises from 45.0\,ms in V0 to 489.0\,ms in V4, and recovery age p95 rises from 125.15\,ms in V0 to 278.3\,ms in V4. Figure~\ref{fig:age-trace} captures this distinction directly. V2 delivers most of the cadence reduction without retained-state semantics; V4 is useful when a stable last-known-good view is worth the additional age.
+
+Comparing V2 and V4 clarifies where the extra cost originates. V4 emits only one or two more frames than V2 in the headline scenarios, so its additional benefit is not further cadence reduction. Instead, V4 layers retained-state continuity on top of the pacing already created by batching. That continuity costs another 260--330\,ms of p95 latency, depending on the scenario, and raises the age of the visible state both before recovery and after the hop becomes healthy again.
+
+\subsection{Supporting Results and Negative Findings}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/intel_v2_batch_window_tradeoff.png}
+  \Description{A trade-off plot for the Intel V2 batch-window sweep. Larger batch windows reduce downstream cadence but move the latency curve upward, indicating a direct latency-versus-stability trade-off.}
+  \caption{Latency-versus-cadence trade-off across fixed V2 batch windows. The 250\,ms operating point sits near the knee between modest pacing and rapidly increasing latency.}
+  \label{fig:batch-window-tradeoff}
+\end{figure}
+
+The batch-window sweep clarifies where the fixed-window operating point comes from. In the clean Intel V2 sweep, raising the batch window from 50\,ms to 1000\,ms increases latency p95 from 74.5\,ms to 1022.6\,ms while reducing maximum downstream frame rate from 3\,s$^{-1}$ to 1\,s$^{-1}$. The extreme 1000\,ms setting also introduces a non-zero stale fraction. This sweep shows that larger windows continue to pace the stream, but the latency penalty grows rapidly once the batch window moves beyond the 250\,ms operating point used in the main matrix.
+
+The byte audit does not support a blanket payload reduction claim. In the four headline Intel QoS~0 scenarios, V2 increases downstream payload bytes by 3.4--8.1\% relative to V0, and V4 increases them by 43.7--66.3\%. The gateway therefore sends fewer but larger aggregate envelopes. The evidence supports a reduction in downstream frame cadence and burstiness, not a reduction in downstream payload-byte volume.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{assets/intel_v1_vs_v2_isolation.png}
+  \Description{A multi-scenario ablation figure comparing V1 and V2 across fixed batch windows. The two variants track closely across bytes, frame counts, and latency, indicating that batching explains most of the observed behavior.}
+  \caption{V1 versus V2 isolation sweep. Under matched batch windows, batching explains most of the observed effect, and the incremental benefit of compaction remains small and mixed.}
+  \label{fig:v1-v2-isolation}
+\end{figure*}
+
+The isolation and adaptive sweeps further narrow the story. In the V1 versus V2 isolation sweep, matched batch windows often yield identical downstream frames and bytes, and duplicate-sensitive counters remain at zero across the runs. Where differences do appear, they are small and mixed: under clean conditions V2 changes downstream bytes relative to V1 by -13.0\% to 0.0\%, while under outage it ranges from 0.0\% to +18.5\%. The measured effect beyond batching alone is therefore limited.
+
+Likewise, the V2 versus V3 adaptive comparison shows no material advantage for the tested controller: stale fraction, frames, and bytes remain unchanged, the effective batch window stays fixed at 250\,ms, and the broader parameter sweep yields no scenario in which the controller leaves that operating point and improves stability without violating the latency or byte guardrails.
+
+\begin{table}[t]
+\centering
+\caption{Intel QoS sensitivity across the four headline scenarios. Each cell reports the range of QoS~1 minus QoS~0 deltas across clean, bandwidth-capped, lossy, and outage conditions.}
+\label{tab:intel-qos-delta}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Variant & \makecell[r]{QoS1-QoS0\\p95 range (ms)} & \makecell[r]{Frame\\delta (\%)} & \makecell[r]{Byte\\delta (\%)} & \makecell[c]{Exact dup\\drops} \\
+\midrule
+V0 & -8.1 to +68.5 & 0.0 to 0.0 & 0.0 to 0.0 & 0 \\
+V2 & -6.9 to +4.0 & 0.0 to 0.0 & 0.0 to 0.0 & 0 \\
+V4 & -56.7 to +55.7 & -11.1 to +5.9 & -7.6 to +0.3 & 0 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Table~\ref{tab:intel-qos-delta} shows that QoS~0 and QoS~1 remain close in the primary matrix. QoS~1 produces zero observed exact duplicate drops, and it does not change the qualitative ranking of V0, V2, and V4 across the headline scenarios.
+For the dashboard-facing conclusion, the near-zero QoS differences mean the observed stability trade-off is driven by gateway pacing and retained-state behavior, not by MQTT delivery mode in this local broker setup.
+
+\begin{table}[t]
+\centering
+\caption{AoT portability-check summary (QoS~0, means across two replicated trials).}
+\label{tab:aot-summary}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lccr@{}}
+\toprule
+Scenario & Variant & Frames & \makecell[r]{Latency p95\\(ms)} \\
+\midrule
+clean & V0 & 439 & 77.5 \\
+clean & V4 & 18 & 276.1 \\
+\nolinkurl{outage_5s} & V0 & 424 & 74.7 \\
+\nolinkurl{outage_5s} & V4 & 16 & 273.2 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Table~\ref{tab:aot-summary} shows that the same continuity-versus-latency trade-off persists on the smaller AoT portability check, but the matrix remains too small to carry a second primary claim.
+
+\section{Discussion and Threats to Validity}
+
+The final evidence supports a narrow systems interpretation. The gateway is most useful when the design objective is dashboard continuity under last-hop impairment rather than minimum per-message latency. The dominant mechanism is pacing: the gateway emits far fewer downstream frames and therefore makes the rendered stream easier to follow. V4 extends that behavior by preserving last-known-good state through outage. The trade-off is explicit throughout the results: display latency rises, visible age rises, and downstream payload bytes do not fall. The contribution is therefore not generic communication efficiency, but a controlled reshaping of operator-visible behavior under impairment.
+
+\subsection{Threats to Validity}
+
+Several limits bound the generality of the result. First, the main evidence comes from bounded Intel and AoT slices executed on a local, machine-scale testbed; the results should not be read as a deployment-wide claim about larger workloads or different gateway placements. Second, the reported downstream metrics are proxy-side measurements on the gateway-to-dashboard hop. That boundary is appropriate for a dashboard-facing question, but it does not establish a generic broker or WAN result. Third, the QoS observations are setup-specific: the local broker configuration produces zero observed exact duplicate drops, so the QoS discussion remains descriptive rather than universal. Finally, missing-update attribution is often unavailable once aggregation changes proxy and gateway frame counts, which limits fine-grained causal claims about every omitted dashboard update. These limits do not invalidate the primary result, but they constrain it to a dashboard-facing, last-hop impairment study.
+
+\Needspace{10\baselineskip}
+\section{Conclusion}
+
+Agrasandhani demonstrates that a smart gateway can make an IoT dashboard materially steadier under last-hop impairment by sharply reducing downstream frame cadence and, in V4, preserving visible state through disruption. The same evaluation also makes the costs explicit: higher display latency, older visible state, no blanket downstream byte reduction, and no material gain from the tested adaptive controller. Under the replicated workloads studied here, gateway-side pacing is therefore best understood as a continuity mechanism for impaired dashboard paths rather than as a universal throughput optimization.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
