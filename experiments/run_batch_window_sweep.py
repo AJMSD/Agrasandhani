@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +11,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from experiments.run_sweep import LOGS_ROOT, SweepConfig, _port_open, ensure_browser_capture_prerequisites, run_once
+from experiments.run_sweep import DEFAULT_IMPAIRMENT_SEED, parse_seed_list
+from experiments.sweep_aggregation import write_condition_aggregates
 
 DEFAULT_BATCH_WINDOWS = [50, 100, 250, 500, 1000]
 
@@ -31,6 +32,8 @@ class BatchWindowSweepConfig:
     mqtt_host: str
     mqtt_port: int
     run_browser: bool
+    trial_seeds: list[int] | None = None
+    default_impairment_seed: int = DEFAULT_IMPAIRMENT_SEED
 
 
 def parse_batch_windows(raw_value: str) -> list[int]:
@@ -84,28 +87,41 @@ def run_batch_window_sweep(config: BatchWindowSweepConfig) -> Path:
 
     sweep_dir = LOGS_ROOT / config.sweep_id
     if sweep_dir.exists():
-        shutil.rmtree(sweep_dir)
+        raise SystemExit(f"Sweep output root already exists and will not be overwritten: {sweep_dir}")
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
     completed_runs: list[dict[str, object]] = []
+    trial_seeds = config.trial_seeds or [config.default_impairment_seed]
+    use_trial_layout = len(trial_seeds) > 1
     for batch_window_ms in config.batch_windows:
-        run_config = build_sweep_config(config, batch_window_ms=batch_window_ms)
-        run_dir = run_once(
-            run_config,
-            variant="v2",
-            mqtt_qos=0,
-            scenario_name="clean",
-            run_label_suffix=build_run_label_suffix(batch_window_ms),
-        )
-        completed_runs.append(
-            {
-                "batch_window_ms": batch_window_ms,
-                "run_dir": str(run_dir),
-                "run_id": run_dir.name,
-            }
-        )
+        for trial_index, impairment_seed in enumerate(trial_seeds, start=1):
+            run_config = build_sweep_config(config, batch_window_ms=batch_window_ms)
+            run_once_kwargs: dict[str, object] = {}
+            if use_trial_layout:
+                run_once_kwargs["trial_index"] = trial_index
+                run_once_kwargs["impairment_seed"] = impairment_seed
+            run_dir = run_once(
+                run_config,
+                variant="v2",
+                mqtt_qos=0,
+                scenario_name="clean",
+                run_label_suffix=build_run_label_suffix(batch_window_ms),
+                **run_once_kwargs,
+            )
+            completed_runs.append(
+                    {
+                        "batch_window_ms": batch_window_ms,
+                        "run_dir": str(run_dir),
+                        "run_id": f"{run_dir.parent.name}-{run_dir.name}" if use_trial_layout else run_dir.name,
+                        "condition_id": run_dir.parent.name if use_trial_layout else run_dir.name,
+                        "trial_id": run_dir.name if use_trial_layout else None,
+                    "trial_index": trial_index if use_trial_layout else None,
+                    "impairment_seed": impairment_seed,
+                }
+            )
 
     manifest = {
+        "schema_version": 2,
         "sweep_id": config.sweep_id,
         "data_file": str(config.data_file),
         "variant": "v2",
@@ -116,9 +132,11 @@ def run_batch_window_sweep(config: BatchWindowSweepConfig) -> Path:
         "replay_speed": config.replay_speed,
         "sensor_limit": config.sensor_limit,
         "burst_enabled": True,
+        "trial_seeds": trial_seeds,
         "runs": completed_runs,
     }
     (sweep_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    write_condition_aggregates(sweep_dir)
     return sweep_dir
 
 
@@ -136,6 +154,8 @@ def parse_args(argv: list[str] | None = None) -> BatchWindowSweepConfig:
     parser.add_argument("--proxy-port", type=int, default=9000)
     parser.add_argument("--mqtt-host", default="127.0.0.1")
     parser.add_argument("--mqtt-port", type=int, default=1883)
+    parser.add_argument("--impairment-seed", type=int, default=DEFAULT_IMPAIRMENT_SEED)
+    parser.add_argument("--trial-seeds", type=parse_seed_list)
     parser.add_argument("--skip-browser", action="store_true")
     args = parser.parse_args(argv)
     return BatchWindowSweepConfig(
@@ -152,6 +172,8 @@ def parse_args(argv: list[str] | None = None) -> BatchWindowSweepConfig:
         mqtt_host=args.mqtt_host,
         mqtt_port=args.mqtt_port,
         run_browser=not args.skip_browser,
+        trial_seeds=args.trial_seeds,
+        default_impairment_seed=args.impairment_seed,
     )
 
 

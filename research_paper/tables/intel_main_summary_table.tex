@@ -1,0 +1,28 @@
+\begin{table}[t]
+\centering
+\caption{Primary Intel summary (QoS~0, means across three replicated trials).}
+\label{tab:main-summary}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lrr>{\raggedleft\arraybackslash}p{0.16\columnwidth}>{\raggedright\arraybackslash}p{0.26\columnwidth}@{}}
+\toprule
+Variant & Frames & Bytes & \makecell[r]{Latency p95\\(ms)} & Scenario \\
+\midrule
+V0 & 132 & 12069 & 31.9 & clean \\
+V2 & 5 & 13051 & 276.2 & clean \\
+V4 & 6 & 17641 & 607.7 & clean \\
+V0 & 132 & 12069 & 121.5 & \nolinkurl{bandwidth_200kbps} \\
+V2 & 5 & 13051 & 271.5 & \nolinkurl{bandwidth_200kbps} \\
+V4 & 6 & 17641 & 573.7 & \nolinkurl{bandwidth_200kbps} \\
+V0 & 128 & 11725 & 115.7 & \nolinkurl{loss_2pct} \\
+V2 & 4 & 12129 & 267.0 & \nolinkurl{loss_2pct} \\
+V4 & 5 & 16845 & 546.0 & \nolinkurl{loss_2pct} \\
+V0 & 116 & 10605 & 119.8 & \nolinkurl{outage_5s} \\
+V2 & 4 & 11401 & 279.1 & \nolinkurl{outage_5s} \\
+V4 & 6 & 17641 & 541.7 & \nolinkurl{outage_5s} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from experiments.analyze_run import analyze_run
+from experiments.analyze_run import analyze_run, collect_run_summary
 from experiments.plot_sweep import plot_sweep
 
 
@@ -59,14 +61,18 @@ class AnalysisTests(unittest.TestCase):
                         "duplicates_dropped": 2,
                         "compacted_dropped": 1,
                         "value_dedup_dropped": 4,
+                        "freshness_ttl_ms": 1000,
                         "effective_batch_window_ms": 250,
+                        "adaptive_window_increase_events": 2,
+                        "adaptive_window_decrease_events": 1,
+                        "last_adaptation_reason": "degrade:queue_depth=30",
                         "stale_sensor_count": 5,
                     }
                 ),
                 encoding="utf-8",
             )
             (run_dir / "proxy_metrics.json").write_text(
-                json.dumps({"dropped_frames": 1, "downstream_frames_out": 2, "downstream_bytes_out": 330}),
+                json.dumps({"dropped_frames": 1, "downstream_frames_out": 99, "downstream_bytes_out": 9999}),
                 encoding="utf-8",
             )
             (run_dir / "dashboard_summary.json").write_text(
@@ -97,11 +103,23 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(summary["duplicates_dropped"], 2)
             self.assertEqual(summary["compacted_dropped"], 1)
             self.assertEqual(summary["value_dedup_dropped"], 4)
+            self.assertEqual(summary["freshness_ttl_ms"], 1000)
             self.assertEqual(summary["effective_batch_window_ms"], 250)
+            self.assertEqual(summary["adaptive_window_increase_events"], 2)
+            self.assertEqual(summary["adaptive_window_decrease_events"], 1)
+            self.assertEqual(summary["last_adaptation_reason"], "degrade:queue_depth=30")
             self.assertEqual(summary["stale_sensor_count"], 5)
             self.assertEqual(summary["dashboard_stale_count"], 6)
             self.assertEqual(summary["dashboard_message_count"], 10)
             self.assertEqual(summary["dashboard_frame_count"], 2)
+            self.assertEqual(summary["proxy_sent_frame_count"], 1)
+            self.assertEqual(summary["proxy_downstream_frames_out"], 1)
+            self.assertEqual(summary["proxy_downstream_bytes_out"], 150)
+            self.assertEqual(summary["max_bandwidth_bytes_per_s"], 150)
+            self.assertEqual(summary["max_frame_rate_per_s"], 1)
+            self.assertEqual(summary["proxy_inter_frame_gap_sample_count"], 0)
+            self.assertEqual(summary["proxy_inter_frame_gap_mean_ms"], 0.0)
+            self.assertEqual(summary["proxy_frame_rate_stddev_per_s"], 0.0)
             self.assertAlmostEqual(summary["stale_fraction"], 0.0)
             self.assertTrue((run_dir / "summary.json").exists())
             self.assertTrue((run_dir / "timeseries.csv").exists())
@@ -229,6 +247,87 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(summary["missing_updates_unclassified_count"], 2)
             self.assertIn("proxy_frame_alignment_note", summary)
 
+    def test_analyze_run_derives_proxy_jitter_metrics_from_sent_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            run_dir = Path(tmp_dir_name)
+            self._write_csv(
+                run_dir / "proxy_frame_log.csv",
+                ["event", "payload_bytes", "downstream_sent_ms", "upstream_received_ms", "outage"],
+                [
+                    ["sent", "100", "1000", "950", "false"],
+                    ["sent", "110", "1120", "1080", "false"],
+                    ["sent", "120", "1320", "1280", "false"],
+                    ["sent", "130", "1600", "1550", "false"],
+                    ["sent", "140", "2100", "2050", "false"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ],
+                [],
+            )
+
+            summary = analyze_run(run_dir)
+
+            self.assertEqual(summary["proxy_downstream_frames_out"], 5)
+            self.assertEqual(summary["proxy_downstream_bytes_out"], 600)
+            self.assertEqual(summary["proxy_inter_frame_gap_sample_count"], 4)
+            self.assertEqual(summary["proxy_inter_frame_gap_mean_ms"], 275.0)
+            self.assertEqual(summary["proxy_inter_frame_gap_p50_ms"], 240.0)
+            self.assertEqual(summary["proxy_inter_frame_gap_p95_ms"], 467.0)
+            self.assertEqual(summary["proxy_inter_frame_gap_p99_ms"], 493.4)
+            self.assertEqual(summary["proxy_inter_frame_gap_stddev_ms"], 141.686)
+            self.assertEqual(summary["max_bandwidth_bytes_per_s"], 460)
+            self.assertEqual(summary["max_frame_rate_per_s"], 4)
+            self.assertEqual(summary["proxy_frame_rate_stddev_per_s"], 1.5)
+
+    def test_collect_run_summary_is_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            run_dir = Path(tmp_dir_name)
+            self._write_csv(
+                run_dir / "proxy_frame_log.csv",
+                ["event", "payload_bytes", "downstream_sent_ms", "upstream_received_ms", "outage"],
+                [
+                    ["sent", "100", "1000", "950", "false"],
+                    ["sent", "110", "1250", "1210", "false"],
+                ],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                [
+                    "frame_index",
+                    "frame_id",
+                    "gateway_mode",
+                    "sensor_id",
+                    "metric_type",
+                    "msg_id",
+                    "ts_sent",
+                    "ts_displayed",
+                    "age_ms_at_display",
+                    "stale_at_display",
+                ],
+                [],
+            )
+
+            summary = collect_run_summary(run_dir)
+
+            self.assertEqual(summary["proxy_inter_frame_gap_sample_count"], 1)
+            self.assertEqual(summary["proxy_inter_frame_gap_mean_ms"], 250.0)
+            self.assertFalse((run_dir / "summary.json").exists())
+            self.assertFalse((run_dir / "summary.csv").exists())
+            self.assertFalse((run_dir / "timeseries.csv").exists())
+
     def test_plot_sweep_creates_expected_png_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:
             sweep_dir = Path(tmp_dir_name)
@@ -256,6 +355,46 @@ class AnalysisTests(unittest.TestCase):
 
             plot_sweep(sweep_dir)
 
+            plots_dir = sweep_dir / "plots"
+            self.assertTrue((plots_dir / "latency_cdf.png").exists())
+            self.assertTrue((plots_dir / "bandwidth_over_time.png").exists())
+            self.assertTrue((plots_dir / "message_rate_over_time.png").exists())
+            self.assertTrue((plots_dir / "stale_fraction.png").exists())
+
+    def test_plot_sweep_script_runs_as_top_level_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            sweep_dir = Path(tmp_dir_name)
+            run_dir = sweep_dir / "run-a"
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.json").write_text(
+                json.dumps({"variant": "v4", "scenario": "clean", "mqtt_qos": 0}),
+                encoding="utf-8",
+            )
+            self._write_csv(
+                run_dir / "summary.csv",
+                ["variant", "scenario", "mqtt_qos", "stale_fraction"],
+                [["v4", "clean", "0", "0.1"]],
+            )
+            self._write_csv(
+                run_dir / "dashboard_measurements.csv",
+                ["age_ms_at_display"],
+                [["10"], ["15"], ["30"]],
+            )
+            self._write_csv(
+                run_dir / "timeseries.csv",
+                ["epoch_second", "bandwidth_bytes_per_s", "frame_rate_per_s", "update_rate_per_s"],
+                [["1", "100", "2", "5"], ["2", "120", "2", "6"]],
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(Path("experiments/plot_sweep.py").resolve()), str(sweep_dir)],
+                cwd=Path(__file__).resolve().parent.parent,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
             plots_dir = sweep_dir / "plots"
             self.assertTrue((plots_dir / "latency_cdf.png").exists())
             self.assertTrue((plots_dir / "bandwidth_over_time.png").exists())

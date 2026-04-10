@@ -1,14 +1,25 @@
-\section{Proposed Technique}
+\section{System Design}
 
-\subsection{Approach Overview}
-Agrasandhani is an end-to-end MQTT pipeline that treats sensor updates as a stream to be cleaned, summarized, and delivered with stable dashboard semantics. The system has four components. (1) A Python/asyncio \emph{sensor simulator} generates a mixed workload (slowly-changing and spiky sensors) and publishes JSON messages of the form \texttt{\{sensor\_id, msg\_id, ts\_sent, value, type\}} to an MQTT topic (e.g., \texttt{sensors/raw}), allowing unambiguous measurement of duplicates and latency. (2) A standard \emph{MQTT broker} (Mosquitto) relays messages using MQTT QoS 0 and QoS 1; QoS 1 provides ``at least once'' delivery and may introduce duplicates via retransmission, which motivates message-level deduplication in the gateway \cite{mqtt311}. (3) The \emph{smart gateway} subscribes to \texttt{sensors/raw} and emits aggregated updates to \texttt{gateway/agg} using an ablation ladder of policies: V0 forwards every message; V1 performs hybrid batching (flush every $T$ ms or when $K$ messages accumulate); V2 adds two-stage deduplication (drop exact duplicates by \texttt{msg\_id} and compact each batch to the latest update per sensor); V3 adapts the publish rate by adjusting $T$ based on observed publish health (send time/backlog), using a simple control law where if backlog $> B$ or publish time EMA $> P$ for $M$ consecutive flushes then $T \leftarrow \min(\alpha T, T_{\max})$, else $T \leftarrow \max(T/\alpha, T_{\min})$; and V4 combines V3 with last-known-good semantics by ensuring the dashboard can hold prior values and expose freshness (age) with a TTL. (4) A lightweight \emph{dashboard backend} subscribes to \texttt{gateway/agg} and pushes updates to a browser UI via WebSockets, where the UI displays the latest value per sensor along with an explicit \texttt{age} indicator and TTL-based staleness marking. To study robustness under degraded connectivity, we apply deterministic network impairments primarily on the gateway-to-dashboard path (bandwidth caps, loss, delay, jitter, and short outages) using Linux traffic control; \texttt{tc netem} supports controlled delay/loss/jitter/duplication for repeatable experiments.
+\subsection{End-to-End Pipeline}
+
+Agrasandhani is an end-to-end MQTT pipeline that treats sensor updates as a stream to be reshaped before browser delivery. The system has four components: a dataset replay publisher that emits normalized sensor messages; a Mosquitto broker that carries MQTT QoS~0 or QoS~1 traffic; a gateway that transforms the stream; and a WebSocket dashboard backend that exposes the latest sensor state to the browser. Replay messages carry \texttt{sensor\_id}, \texttt{metric\_type}, \texttt{msg\_id}, and \texttt{ts\_sent}, which are sufficient to measure end-to-end latency and to compare downstream behavior across gateway policies. Figure~\ref{fig:architecture} shows the measured path.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth,height=\textheight,keepaspectratio]{Sections/approach-cs537.png}
+  \includegraphics[width=\linewidth]{Sections/approach-cs537.png}
+  \Description{System architecture showing dataset replay feeding an MQTT broker, a smart gateway, and a WebSocket dashboard backend that drives the browser-facing dashboard.}
   \caption{Agrasandhani end-to-end pipeline.}
   \label{fig:architecture}
 \end{figure}
 
-% \subsection{Approach Details}
-% Describe the details of each component in this subsection
+\subsection{Gateway Policies}
+
+The gateway policy ladder spans V0 through V4. V0 forwards every message immediately and serves as the baseline. V1 introduces hybrid time/size batching. V2 keeps batching and compacts each batch to the latest update per sensor, while also exposing duplicate-sensitive accounting. V3 preserves V2's compaction logic and allows the effective batch window to change in response to queue depth and send-time signals. V4 builds on V2 by exposing last-known-good dashboard state with explicit freshness semantics and TTL-based staleness marking.
+
+The main comparison focuses on V0, V2, and V4. V2 captures the primary pacing mechanism without last-known-good retention. V4 shows the additional continuity behavior created by retaining visible state through outage. V1 and V3 remain important as supporting ablations because they isolate the incremental effect of batching and adaptation beyond the main claim-carrying comparison.
+
+The main-matrix smart variants use a 250\,ms base batch window and a 1000\,ms freshness TTL. For V3, the adaptive controller may vary the effective batch window between 10\,ms and 1000\,ms, increasing it by 100\,ms when queue depth or send time crosses threshold and decreasing it by 50\,ms after sustained healthy flushes. These defaults matter because the supporting adaptive analysis shows that, under the evaluated impairments, the controller rarely finds evidence strong enough to move off the 250\,ms operating point.
+
+\subsection{Measurement Boundary}
+
+Impairments are injected primarily on the gateway-to-dashboard last hop through the application-layer impairment proxy, with optional host-level shaping available in the same context. This distinction matters because the reported downstream frame and byte metrics are measured at the proxy output. The central claims therefore concern what the dashboard-facing path emits and displays rather than generic broker-link throughput. MQTT still matters for ingest semantics and QoS handling, especially when reasoning about duplicate-sensitive behavior, but the research object is the gateway's effect on the visualization stream seen by the operator.

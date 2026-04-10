@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Intel QoS sensitivity across the four headline scenarios. Each cell reports the range of QoS~1 minus QoS~0 deltas across clean, bandwidth-capped, lossy, and outage conditions.}
+\label{tab:intel-qos-delta}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Variant & \makecell[r]{QoS1-QoS0\\p95 range (ms)} & \makecell[r]{Frame\\delta (\%)} & \makecell[r]{Byte\\delta (\%)} & \makecell[c]{Exact dup\\drops} \\
+\midrule
+V0 & -8.1 to +68.5 & 0.0 to 0.0 & 0.0 to 0.0 & 0 \\
+V2 & -6.9 to +4.0 & 0.0 to 0.0 & 0.0 to 0.0 & 0 \\
+V4 & -56.7 to +55.7 & -11.1 to +5.9 & -7.6 to +0.3 & 0 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}

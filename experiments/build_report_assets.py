@@ -12,20 +12,26 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from experiments.analyze_run import collect_proxy_inter_frame_gaps, collect_run_summary
+from experiments.sweep_aggregation import (
+    CONDITION_AGGREGATES_FILENAME,
+    aggregate_summary_rows,
+    load_summary_rows,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPORT_DIR = BASE_DIR / "report"
+SCENARIOS_DIR = BASE_DIR / "experiments" / "scenarios"
+INTEL_PRIMARY_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms", "outage_5s")
 INTEL_BANDWIDTH_SCENARIOS = ("clean", "bandwidth_200kbps", "loss_2pct", "outage_5s")
 INTEL_BATCH_WINDOW_SWEEP_WINDOWS = (50, 100, 250, 500, 1000)
 INTEL_V1_V2_ISOLATION_SCENARIOS = ("clean", "bandwidth_200kbps", "outage_5s")
 INTEL_V1_V2_ISOLATION_WINDOWS = (50, 100, 250, 500, 1000)
-INTEL_ADAPTIVE_SCENARIOS = ("bandwidth_200kbps", "loss_2pct")
-OUTAGE_PHASE_WINDOWS: tuple[tuple[str, float, float | None], ...] = (
-    ("steady-before-outage", 0.0, 10.0),
-    ("outage", 10.0, 15.0),
-    ("recovery", 15.0, None),
-)
+INTEL_ADAPTIVE_SCENARIOS = ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms")
+OUTAGE_SCENARIO = "outage_5s"
 PAPER_MAIN_VARIANTS = ("v0", "v2", "v4")
+BYTE_CLAIM_FALLBACK_WORDING = "Agrasandhani reduced downstream frame cadence and message burstiness, not payload bytes, in this setup."
+ADAPTIVE_CLAIM_FALLBACK_WORDING = "Under the tested thresholds, adaptive control did not materially outperform fixed-window batching."
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -35,15 +41,6 @@ def _load_json(path: Path) -> dict[str, object]:
 def _load_csv(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
-
-
-def _load_summary_rows(sweep_dir: Path) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for summary_path in sorted(sweep_dir.glob("*/summary.json")):
-        payload = _load_json(summary_path)
-        payload["run_dir"] = str(summary_path.parent)
-        rows.append(payload)
-    return rows
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -145,13 +142,77 @@ def _load_proxy_anchor_ms(run_dir: Path) -> int | None:
     return min(anchors)
 
 
-def _phase_for_second(relative_second: float) -> str:
-    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
+def _normalized_phase_name(scenario: str) -> str:
+    if scenario == "clean":
+        return "steady-state"
+    return "impairment-window"
+
+
+def _scenario_phase_windows(scenario: str, *, total_duration_s: float | None = None) -> list[tuple[str, float, float | None]]:
+    scenario_path = SCENARIOS_DIR / f"{scenario}.json"
+    if scenario_path.exists():
+        payload = _load_json(scenario_path)
+        raw_phases = payload.get("phases", []) if isinstance(payload, dict) else []
+        if isinstance(raw_phases, list) and raw_phases:
+            if len(raw_phases) == 1:
+                phase = raw_phases[0]
+                duration_s = phase.get("duration_s")
+                if duration_s is None:
+                    duration_s = total_duration_s
+                return [(_normalized_phase_name(scenario), 0.0, float(duration_s) if duration_s is not None else None)]
+            windows: list[tuple[str, float, float | None]] = []
+            phase_start_s = 0.0
+            for index, phase in enumerate(raw_phases):
+                phase_name = str(phase.get("name", f"phase-{index + 1}"))
+                duration_s = phase.get("duration_s")
+                phase_end_s = None if duration_s is None else phase_start_s + float(duration_s)
+                if index == len(raw_phases) - 1 and total_duration_s is not None:
+                    phase_end_s = total_duration_s
+                windows.append((phase_name, phase_start_s, phase_end_s))
+                if phase_end_s is None:
+                    break
+                phase_start_s = phase_end_s
+            return windows
+
+    return [(_normalized_phase_name(scenario), 0.0, total_duration_s)]
+
+
+def _phase_for_second(relative_second: float, phase_windows: list[tuple[str, float, float | None]]) -> str:
+    for phase_name, start_s, end_s in phase_windows:
         if end_s is None and relative_second >= start_s:
             return phase_name
         if end_s is not None and start_s <= relative_second < end_s:
             return phase_name
-    return OUTAGE_PHASE_WINDOWS[-1][0]
+    if not phase_windows:
+        return "analysis-window"
+    return phase_windows[-1][0]
+
+
+def _phase_color(phase_name: str) -> str:
+    if phase_name in {"steady-state", "steady-before-outage"}:
+        return "#d9edf7"
+    if phase_name in {"impairment-window", "outage"}:
+        return "#f2dede"
+    if phase_name == "recovery":
+        return "#dff0d8"
+    return "#ececec"
+
+
+def _shade_phase_windows(
+    axis: plt.Axes,
+    *,
+    phase_windows: list[tuple[str, float, float | None]],
+    phase_end_s: float,
+) -> None:
+    for phase_name, start_s, end_s in phase_windows:
+        clipped_end_s = phase_end_s if end_s is None else min(end_s, phase_end_s)
+        if clipped_end_s <= start_s:
+            continue
+        axis.axvspan(start_s, clipped_end_s, color=_phase_color(phase_name), alpha=0.2)
+    for _, _, end_s in phase_windows[:-1]:
+        if end_s is None or end_s >= phase_end_s:
+            continue
+        axis.axvline(end_s, color="0.4", linestyle="--", linewidth=1)
 
 
 def _format_stat_value(value: float | None) -> str:
@@ -195,16 +256,17 @@ def _relative_second_values(
 
 def _build_intel_outage_freshness_rows(intel_rows: list[dict[str, object]]) -> list[dict[str, object]]:
     freshness_rows: list[dict[str, object]] = []
+    phase_windows = _scenario_phase_windows(OUTAGE_SCENARIO)
     for variant in ("v0", "v4"):
         row = _select_row(intel_rows, variant=variant, scenario="outage_5s", mqtt_qos=0)
         run_dir = Path(str(row["run_dir"]))
         measurement_rows = _load_measurement_rows(run_dir)
         anchor_ms = _load_proxy_anchor_ms(run_dir)
         relative_seconds = _relative_second_values(measurement_rows, time_field="ts_displayed_ms", anchor_ms=anchor_ms)
-        phase_ages: dict[str, list[float]] = {phase_name: [] for phase_name, _, _ in OUTAGE_PHASE_WINDOWS}
-        phase_counts: dict[str, int] = {phase_name: 0 for phase_name, _, _ in OUTAGE_PHASE_WINDOWS}
+        phase_ages: dict[str, list[float]] = {phase_name: [] for phase_name, _, _ in phase_windows}
+        phase_counts: dict[str, int] = {phase_name: 0 for phase_name, _, _ in phase_windows}
         for measurement_row, relative_second in zip(measurement_rows, relative_seconds, strict=False):
-            phase_name = _phase_for_second(relative_second)
+            phase_name = _phase_for_second(relative_second, phase_windows)
             phase_ages[phase_name].append(float(measurement_row["age_ms"]))
             phase_counts[phase_name] += 1
 
@@ -248,6 +310,781 @@ def _write_markdown_table(path: Path, rows: list[dict[str, object]], *, columns:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _jitter_summary_row(
+    summary_row: dict[str, object],
+    *,
+    source_sweep: str,
+    comparison_family: str,
+) -> dict[str, object]:
+    run_dir = Path(str(summary_row["run_dir"]))
+    derived_summary = summary_row if int(summary_row.get("n", 1) or 1) > 1 else collect_run_summary(run_dir)
+    effective_batch_window_ms = int(derived_summary.get("effective_batch_window_ms") or summary_row.get("effective_batch_window_ms", 0))
+    max_frame_rate_per_s = int(derived_summary.get("max_frame_rate_per_s") or summary_row.get("max_frame_rate_per_s", 0))
+    return {
+        "source_sweep": source_sweep,
+        "comparison_family": comparison_family,
+        "variant": str(summary_row.get("variant", derived_summary.get("variant", ""))),
+        "scenario": str(summary_row.get("scenario", derived_summary.get("scenario", ""))),
+        "mqtt_qos": int(summary_row.get("mqtt_qos", derived_summary.get("mqtt_qos", 0)) or 0),
+        "proxy_inter_frame_gap_sample_count": int(derived_summary.get("proxy_inter_frame_gap_sample_count", 0)),
+        "proxy_inter_frame_gap_mean_ms": float(derived_summary.get("proxy_inter_frame_gap_mean_ms", 0.0)),
+        "proxy_inter_frame_gap_p50_ms": float(derived_summary.get("proxy_inter_frame_gap_p50_ms", 0.0)),
+        "proxy_inter_frame_gap_p95_ms": float(derived_summary.get("proxy_inter_frame_gap_p95_ms", 0.0)),
+        "proxy_inter_frame_gap_p99_ms": float(derived_summary.get("proxy_inter_frame_gap_p99_ms", 0.0)),
+        "proxy_inter_frame_gap_stddev_ms": float(derived_summary.get("proxy_inter_frame_gap_stddev_ms", 0.0)),
+        "proxy_frame_rate_stddev_per_s": float(derived_summary.get("proxy_frame_rate_stddev_per_s", 0.0)),
+        "effective_batch_window_ms": effective_batch_window_ms,
+        "max_frame_rate_per_s": max_frame_rate_per_s,
+        "run_dir": str(run_dir),
+    }
+
+
+def _build_intel_jitter_summary_rows(
+    intel_rows: list[dict[str, object]],
+    *,
+    intel_sweep_dir: Path,
+    adaptive_rows: list[dict[str, object]] | None = None,
+    adaptive_sweep_dir: Path | None = None,
+) -> list[dict[str, object]]:
+    rows = [
+        _jitter_summary_row(
+            row,
+            source_sweep=intel_sweep_dir.name,
+            comparison_family="intel_primary",
+        )
+        for row in _run_rows(
+            intel_rows,
+            variants=PAPER_MAIN_VARIANTS,
+            scenarios=INTEL_PRIMARY_SCENARIOS,
+            qos_values=(0, 1),
+        )
+    ]
+    if adaptive_rows is not None and adaptive_sweep_dir is not None:
+        rows.extend(
+            _jitter_summary_row(
+                row,
+                source_sweep=adaptive_sweep_dir.name,
+                comparison_family="intel_adaptive_v2_vs_v3",
+            )
+            for row in _run_rows(
+                adaptive_rows,
+                variants=("v2", "v3"),
+                scenarios=INTEL_ADAPTIVE_SCENARIOS,
+                qos_values=(0,),
+            )
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row["comparison_family"]),
+            str(row["scenario"]),
+            int(row["mqtt_qos"]),
+            str(row["variant"]),
+        )
+    )
+    return rows
+
+
+def _canonical_report_asset_path(*parts: str) -> str:
+    return "/".join(("report", "assets", *parts))
+
+
+def _canonical_logs_path(*parts: str) -> str:
+    return "/".join(("experiments", "logs", *parts))
+
+
+def _source_path(path: Path) -> str:
+    try:
+        return path.relative_to(BASE_DIR).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _aggregate_artifacts(*sweep_dirs: Path | None) -> list[str]:
+    artifacts: list[str] = []
+    seen: set[str] = set()
+    for sweep_dir in sweep_dirs:
+        if sweep_dir is None:
+            continue
+        artifact = _source_path(sweep_dir / CONDITION_AGGREGATES_FILENAME)
+        if artifact in seen:
+            continue
+        seen.add(artifact)
+        artifacts.append(artifact)
+    return artifacts
+
+
+def _run_rows(
+    rows: list[dict[str, object]],
+    *,
+    variants: tuple[str, ...] | None = None,
+    scenarios: tuple[str, ...] | None = None,
+    qos_values: tuple[int, ...] | None = None,
+) -> list[dict[str, object]]:
+    selected: list[dict[str, object]] = []
+    for row in rows:
+        if variants is not None and str(row["variant"]) not in variants:
+            continue
+        if scenarios is not None and str(row["scenario"]) not in scenarios:
+            continue
+        if qos_values is not None and int(row["mqtt_qos"]) not in qos_values:
+            continue
+        selected.append(row)
+    return sorted(selected, key=lambda candidate: str(candidate["run_id"]))
+
+
+def _run_ids(rows: list[dict[str, object]]) -> list[str]:
+    run_ids: set[str] = set()
+    for row in rows:
+        trial_run_ids = row.get("trial_run_ids")
+        if isinstance(trial_run_ids, list) and trial_run_ids:
+            run_ids.update(str(run_id) for run_id in trial_run_ids)
+            continue
+        if "run_id" in row:
+            run_ids.add(str(row["run_id"]))
+            continue
+        if "run_dir" in row:
+            run_ids.add(Path(str(row["run_dir"])).name)
+    return sorted(run_ids)
+
+
+def _summary_artifacts(rows: list[dict[str, object]]) -> list[str]:
+    artifacts: set[str] = set()
+    for row in rows:
+        trial_summary_paths = row.get("trial_summary_paths")
+        if isinstance(trial_summary_paths, list) and trial_summary_paths:
+            artifacts.update(_source_path(Path(str(path))) for path in trial_summary_paths)
+            continue
+        artifacts.add(_source_path(Path(str(row["run_dir"])) / "summary.json"))
+    return sorted(artifacts)
+
+
+def _run_file_artifacts(rows: list[dict[str, object]], *filenames: str) -> list[str]:
+    artifacts: set[str] = set()
+    for row in rows:
+        trial_run_dirs = row.get("trial_run_dirs")
+        run_dirs = trial_run_dirs if isinstance(trial_run_dirs, list) and trial_run_dirs else [row["run_dir"]]
+        for run_dir in run_dirs:
+            resolved_run_dir = Path(str(run_dir))
+            for filename in filenames:
+                artifacts.add(_source_path(resolved_run_dir / filename))
+    return sorted(artifacts)
+
+
+def _inventory_entry(
+    *,
+    asset_path: str,
+    asset_kind: str,
+    source_sweep_ids: list[str],
+    source_artifacts: list[str],
+    source_run_ids: list[str] | None = None,
+    aggregate_input_artifacts: list[str] | None = None,
+) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "asset_path": asset_path,
+        "asset_kind": asset_kind,
+        "source_sweep_ids": source_sweep_ids,
+        "source_artifacts": source_artifacts,
+        "aggregate_input_artifacts": aggregate_input_artifacts or [],
+        "generation_script": "experiments/build_report_assets.py",
+    }
+    if source_run_ids is not None:
+        entry["source_run_ids"] = source_run_ids
+    return entry
+
+
+def _build_old_evidence_inventory(
+    *,
+    intel_sweep_dir: Path,
+    aot_sweep_dir: Path,
+    demo_dir: Path,
+    intel_batch_sweep_dir: Path | None = None,
+    intel_v1_v2_sweep_dir: Path | None = None,
+    intel_adaptive_sweep_dir: Path | None = None,
+    intel_adaptive_parameter_sweep_dir: Path | None = None,
+    intel_rows: list[dict[str, object]],
+    aot_rows: list[dict[str, object]],
+    intel_batch_rows: list[dict[str, object]] | None = None,
+    intel_v1_v2_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_parameter_rows: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    intel_qos0_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=INTEL_BANDWIDTH_SCENARIOS,
+        qos_values=(0,),
+    )
+    intel_qos_pair_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=INTEL_BANDWIDTH_SCENARIOS,
+        qos_values=(0, 1),
+    )
+    intel_clean_qos0_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=("clean",),
+        qos_values=(0,),
+    )
+    intel_outage_qos1_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=("outage_5s",),
+        qos_values=(1,),
+    )
+    intel_outage_v0_v4_rows = _run_rows(
+        intel_rows,
+        variants=("v0", "v4"),
+        scenarios=("outage_5s",),
+        qos_values=(0,),
+    )
+    intel_outage_main_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=("outage_5s",),
+        qos_values=(0,),
+    )
+    intel_primary_jitter_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=INTEL_PRIMARY_SCENARIOS,
+        qos_values=(0, 1),
+    )
+    intel_delay_qos0_rows = _run_rows(
+        intel_rows,
+        variants=PAPER_MAIN_VARIANTS,
+        scenarios=("delay_50ms_jitter20ms",),
+        qos_values=(0,),
+    )
+    key_claim_rows = sorted(intel_rows + aot_rows, key=lambda candidate: str(candidate["run_id"]))
+    jitter_source_sweep_ids = [intel_sweep_dir.name]
+    jitter_source_run_ids = set(_run_ids(intel_primary_jitter_rows))
+    jitter_source_artifacts = set(
+        _run_file_artifacts(
+            intel_primary_jitter_rows,
+            "proxy_frame_log.csv",
+            "gateway_metrics.json",
+        )
+    )
+    if intel_adaptive_rows is not None:
+        jitter_source_sweep_ids.extend(_comparison_source_sweep_ids(intel_adaptive_rows, "v2", "v3"))
+        jitter_source_run_ids |= set(_comparison_source_run_ids(intel_adaptive_rows, "v2", "v3"))
+        jitter_source_artifacts |= set(
+            _comparison_source_artifacts(
+                intel_adaptive_rows,
+                prefixes=("v2", "v3"),
+                filenames=("proxy_frame_log.csv", "gateway_metrics.json"),
+            )
+        )
+    key_claim_source_sweep_ids = {intel_sweep_dir.name, aot_sweep_dir.name, demo_dir.parent.name}
+    key_claim_source_run_ids = set(_run_ids(key_claim_rows))
+    key_claim_source_artifacts = set(_summary_artifacts(key_claim_rows)) | {
+        _source_path(demo_dir / "baseline_dashboard" / "dashboard_summary.json"),
+        _source_path(demo_dir / "smart_dashboard" / "dashboard_summary.json"),
+    }
+    guardrail_source_sweep_ids = {intel_sweep_dir.name}
+    guardrail_source_run_ids = set(_run_ids(intel_rows))
+    guardrail_source_artifacts = set(_summary_artifacts(intel_rows)) | set(
+        _run_file_artifacts(
+            intel_outage_v0_v4_rows,
+            "dashboard_measurements.csv",
+            "dashboard_summary.json",
+            "proxy_frame_log.csv",
+        )
+    )
+    if intel_adaptive_rows is not None:
+        adaptive_sweep_ids = set(_comparison_source_sweep_ids(intel_adaptive_rows, "v2", "v3"))
+        adaptive_run_ids = set(_comparison_source_run_ids(intel_adaptive_rows, "v2", "v3"))
+        adaptive_artifacts = set(
+            _comparison_source_artifacts(
+                intel_adaptive_rows,
+                prefixes=("v2", "v3"),
+                filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+            )
+        )
+        key_claim_source_sweep_ids |= adaptive_sweep_ids
+        key_claim_source_run_ids |= adaptive_run_ids
+        key_claim_source_artifacts |= adaptive_artifacts
+        guardrail_source_sweep_ids |= adaptive_sweep_ids
+        guardrail_source_run_ids |= adaptive_run_ids
+        guardrail_source_artifacts |= adaptive_artifacts
+    if intel_adaptive_parameter_rows is not None:
+        adaptive_parameter_sweep_ids = set(
+            _comparison_source_sweep_ids(intel_adaptive_parameter_rows, "baseline_v2", "v3")
+        )
+        adaptive_parameter_run_ids = set(
+            _comparison_source_run_ids(intel_adaptive_parameter_rows, "baseline_v2", "v3")
+        )
+        adaptive_parameter_artifacts = set(
+            _comparison_source_artifacts(
+                intel_adaptive_parameter_rows,
+                prefixes=("baseline_v2", "v3"),
+                filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+            )
+        )
+        key_claim_source_sweep_ids |= adaptive_parameter_sweep_ids
+        key_claim_source_run_ids |= adaptive_parameter_run_ids
+        key_claim_source_artifacts |= adaptive_parameter_artifacts
+        guardrail_source_sweep_ids |= adaptive_parameter_sweep_ids
+        guardrail_source_run_ids |= adaptive_parameter_run_ids
+        guardrail_source_artifacts |= adaptive_parameter_artifacts
+
+    intel_aggregate_inputs = _aggregate_artifacts(intel_sweep_dir)
+    aot_aggregate_inputs = _aggregate_artifacts(aot_sweep_dir)
+    batch_aggregate_inputs = _aggregate_artifacts(intel_batch_sweep_dir)
+    isolation_aggregate_inputs = _aggregate_artifacts(intel_v1_v2_sweep_dir)
+    adaptive_aggregate_inputs = _aggregate_artifacts(intel_adaptive_sweep_dir)
+    adaptive_parameter_aggregate_inputs = _aggregate_artifacts(intel_adaptive_parameter_sweep_dir)
+    jitter_aggregate_inputs = _aggregate_artifacts(intel_sweep_dir, intel_adaptive_sweep_dir)
+    key_claim_aggregate_inputs = set(_aggregate_artifacts(intel_sweep_dir, aot_sweep_dir))
+    guardrail_aggregate_inputs = set(_aggregate_artifacts(intel_sweep_dir))
+    if intel_adaptive_rows is not None:
+        key_claim_aggregate_inputs |= set(adaptive_aggregate_inputs)
+        guardrail_aggregate_inputs |= set(adaptive_aggregate_inputs)
+    if intel_adaptive_parameter_rows is not None:
+        key_claim_aggregate_inputs |= set(adaptive_parameter_aggregate_inputs)
+        guardrail_aggregate_inputs |= set(adaptive_parameter_aggregate_inputs)
+
+    entries = [
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_clean_qos0_latency_cdf.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_clean_qos0_rows),
+            source_artifacts=_run_file_artifacts(intel_clean_qos0_rows, "dashboard_measurements.csv"),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_outage_qos1_bandwidth_over_time.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_qos1_rows),
+            source_artifacts=_run_file_artifacts(intel_outage_qos1_rows, "timeseries.csv"),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_outage_qos1_message_rate_over_time.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_qos1_rows),
+            source_artifacts=_run_file_artifacts(intel_outage_qos1_rows, "timeseries.csv"),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_outage_qos0_v0_vs_v4_age_over_time.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_v0_v4_rows),
+            source_artifacts=_run_file_artifacts(
+                intel_outage_v0_v4_rows,
+                "dashboard_measurements.csv",
+                "proxy_frame_log.csv",
+            ),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "main_outage_frame_rate.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_main_rows),
+            source_artifacts=_run_file_artifacts(intel_outage_main_rows, "timeseries.csv"),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_delay_qos0_inter_frame_gap_cdf.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_delay_qos0_rows),
+            source_artifacts=_run_file_artifacts(
+                intel_delay_qos0_rows,
+                "proxy_frame_log.csv",
+            ),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "intel_qos_comparison.png"),
+            asset_kind="figure",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos_pair_rows),
+            source_artifacts=_summary_artifacts(intel_qos_pair_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "final_demo_compare.png"),
+            asset_kind="figure",
+            source_sweep_ids=[demo_dir.parent.name],
+            source_artifacts=[_source_path(demo_dir / "demo_compare.png")],
+            aggregate_input_artifacts=[],
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "final_demo_baseline_dashboard.png"),
+            asset_kind="figure",
+            source_sweep_ids=[demo_dir.parent.name],
+            source_artifacts=[_source_path(demo_dir / "baseline_dashboard" / "dashboard.png")],
+            aggregate_input_artifacts=[],
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("figures", "final_demo_smart_dashboard.png"),
+            asset_kind="figure",
+            source_sweep_ids=[demo_dir.parent.name],
+            source_artifacts=[_source_path(demo_dir / "smart_dashboard" / "dashboard.png")],
+            aggregate_input_artifacts=[],
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_primary_run_summary.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_rows),
+            source_artifacts=_summary_artifacts(intel_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_primary_run_summary.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_rows),
+            source_artifacts=_summary_artifacts(intel_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_bandwidth_vs_v0.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_bandwidth_vs_v0.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_qos_comparison.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos_pair_rows),
+            source_artifacts=_summary_artifacts(intel_qos_pair_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_qos_comparison.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos_pair_rows),
+            source_artifacts=_summary_artifacts(intel_qos_pair_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_condensed_summary.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_condensed_summary.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_main_summary_table.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_main_summary_table.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_qos0_rows),
+            source_artifacts=_summary_artifacts(intel_qos0_rows),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_outage_qos0_v0_vs_v4_freshness.csv"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_v0_v4_rows),
+            source_artifacts=_run_file_artifacts(
+                intel_outage_v0_v4_rows,
+                "dashboard_measurements.csv",
+                "dashboard_summary.json",
+                "proxy_frame_log.csv",
+            ),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_outage_qos0_v0_vs_v4_freshness.md"),
+            asset_kind="table",
+            source_sweep_ids=[intel_sweep_dir.name],
+            source_run_ids=_run_ids(intel_outage_v0_v4_rows),
+            source_artifacts=_run_file_artifacts(
+                intel_outage_v0_v4_rows,
+                "dashboard_measurements.csv",
+                "dashboard_summary.json",
+                "proxy_frame_log.csv",
+            ),
+            aggregate_input_artifacts=intel_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_jitter_summary.csv"),
+            asset_kind="table",
+            source_sweep_ids=sorted(jitter_source_sweep_ids),
+            source_run_ids=sorted(jitter_source_run_ids),
+            source_artifacts=sorted(jitter_source_artifacts),
+            aggregate_input_artifacts=jitter_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_jitter_summary.md"),
+            asset_kind="table",
+            source_sweep_ids=sorted(jitter_source_sweep_ids),
+            source_run_ids=sorted(jitter_source_run_ids),
+            source_artifacts=sorted(jitter_source_artifacts),
+            aggregate_input_artifacts=jitter_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "aot_validation_summary.csv"),
+            asset_kind="table",
+            source_sweep_ids=[aot_sweep_dir.name],
+            source_run_ids=_run_ids(aot_rows),
+            source_artifacts=_summary_artifacts(aot_rows),
+            aggregate_input_artifacts=aot_aggregate_inputs,
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_key_claims.md"),
+            asset_kind="table",
+            source_sweep_ids=sorted(key_claim_source_sweep_ids),
+            source_run_ids=sorted(key_claim_source_run_ids),
+            source_artifacts=sorted(key_claim_source_artifacts),
+            aggregate_input_artifacts=sorted(key_claim_aggregate_inputs),
+        ),
+        _inventory_entry(
+            asset_path=_canonical_report_asset_path("tables", "intel_claim_guardrail_review.md"),
+            asset_kind="table",
+            source_sweep_ids=sorted(guardrail_source_sweep_ids),
+            source_run_ids=sorted(guardrail_source_run_ids),
+            source_artifacts=sorted(guardrail_source_artifacts),
+            aggregate_input_artifacts=sorted(guardrail_aggregate_inputs),
+        ),
+    ]
+
+    if intel_batch_rows is not None:
+        entries.extend(
+            [
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("figures", "intel_v2_batch_window_tradeoff.png"),
+                    asset_kind="figure",
+                    source_sweep_ids=[_summary_row_sweep_name(intel_batch_rows[0])],
+                    source_run_ids=_run_ids(intel_batch_rows),
+                    source_artifacts=_summary_artifacts(intel_batch_rows),
+                    aggregate_input_artifacts=batch_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v2_batch_window_tradeoff.csv"),
+                    asset_kind="table",
+                    source_sweep_ids=[_summary_row_sweep_name(intel_batch_rows[0])],
+                    source_run_ids=_run_ids(intel_batch_rows),
+                    source_artifacts=_summary_artifacts(intel_batch_rows),
+                    aggregate_input_artifacts=batch_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v2_batch_window_tradeoff.md"),
+                    asset_kind="table",
+                    source_sweep_ids=[_summary_row_sweep_name(intel_batch_rows[0])],
+                    source_run_ids=_run_ids(intel_batch_rows),
+                    source_artifacts=_summary_artifacts(intel_batch_rows),
+                    aggregate_input_artifacts=batch_aggregate_inputs,
+                ),
+            ]
+        )
+    if intel_v1_v2_rows is not None:
+        entries.extend(
+            [
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("figures", "intel_v1_vs_v2_isolation.png"),
+                    asset_kind="figure",
+                    source_sweep_ids=[Path(str(intel_v1_v2_rows[0]["v1_run_dir"])).parent.name],
+                    source_run_ids=sorted(
+                        {
+                            str(Path(str(row["v1_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            str(Path(str(row["v2_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    source_artifacts=sorted(
+                        {
+                            _source_path(Path(str(row["v1_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            _source_path(Path(str(row["v2_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    aggregate_input_artifacts=isolation_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v1_vs_v2_isolation.csv"),
+                    asset_kind="table",
+                    source_sweep_ids=[Path(str(intel_v1_v2_rows[0]["v1_run_dir"])).parent.name],
+                    source_run_ids=sorted(
+                        {
+                            str(Path(str(row["v1_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            str(Path(str(row["v2_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    source_artifacts=sorted(
+                        {
+                            _source_path(Path(str(row["v1_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            _source_path(Path(str(row["v2_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    aggregate_input_artifacts=isolation_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v1_vs_v2_isolation.md"),
+                    asset_kind="table",
+                    source_sweep_ids=[Path(str(intel_v1_v2_rows[0]["v1_run_dir"])).parent.name],
+                    source_run_ids=sorted(
+                        {
+                            str(Path(str(row["v1_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            str(Path(str(row["v2_run_dir"])).name)
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    source_artifacts=sorted(
+                        {
+                            _source_path(Path(str(row["v1_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                        | {
+                            _source_path(Path(str(row["v2_run_dir"])) / "summary.json")
+                            for row in intel_v1_v2_rows
+                        }
+                    ),
+                    aggregate_input_artifacts=isolation_aggregate_inputs,
+                ),
+            ]
+        )
+    if intel_adaptive_rows is not None:
+        entries.extend(
+            [
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("figures", "intel_v2_vs_v3_adaptive_impairment.png"),
+                    asset_kind="figure",
+                    source_sweep_ids=_comparison_source_sweep_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_run_ids=_comparison_source_run_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_artifacts=_comparison_source_artifacts(
+                        intel_adaptive_rows,
+                        prefixes=("v2", "v3"),
+                        filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+                    ),
+                    aggregate_input_artifacts=adaptive_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v2_vs_v3_adaptive_impairment.csv"),
+                    asset_kind="table",
+                    source_sweep_ids=_comparison_source_sweep_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_run_ids=_comparison_source_run_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_artifacts=_comparison_source_artifacts(
+                        intel_adaptive_rows,
+                        prefixes=("v2", "v3"),
+                        filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+                    ),
+                    aggregate_input_artifacts=adaptive_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v2_vs_v3_adaptive_impairment.md"),
+                    asset_kind="table",
+                    source_sweep_ids=_comparison_source_sweep_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_run_ids=_comparison_source_run_ids(intel_adaptive_rows, "v2", "v3"),
+                    source_artifacts=_comparison_source_artifacts(
+                        intel_adaptive_rows,
+                        prefixes=("v2", "v3"),
+                        filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+                    ),
+                    aggregate_input_artifacts=adaptive_aggregate_inputs,
+                ),
+            ]
+        )
+    if intel_adaptive_parameter_rows is not None:
+        entries.extend(
+            [
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v3_adaptive_parameter_sweep.csv"),
+                    asset_kind="table",
+                    source_sweep_ids=_comparison_source_sweep_ids(
+                        intel_adaptive_parameter_rows,
+                        "baseline_v2",
+                        "v3",
+                    ),
+                    source_run_ids=_comparison_source_run_ids(
+                        intel_adaptive_parameter_rows,
+                        "baseline_v2",
+                        "v3",
+                    ),
+                    source_artifacts=_comparison_source_artifacts(
+                        intel_adaptive_parameter_rows,
+                        prefixes=("baseline_v2", "v3"),
+                        filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+                    ),
+                    aggregate_input_artifacts=adaptive_parameter_aggregate_inputs,
+                ),
+                _inventory_entry(
+                    asset_path=_canonical_report_asset_path("tables", "intel_v3_adaptive_parameter_sweep.md"),
+                    asset_kind="table",
+                    source_sweep_ids=_comparison_source_sweep_ids(
+                        intel_adaptive_parameter_rows,
+                        "baseline_v2",
+                        "v3",
+                    ),
+                    source_run_ids=_comparison_source_run_ids(
+                        intel_adaptive_parameter_rows,
+                        "baseline_v2",
+                        "v3",
+                    ),
+                    source_artifacts=_comparison_source_artifacts(
+                        intel_adaptive_parameter_rows,
+                        prefixes=("baseline_v2", "v3"),
+                        filenames=("summary.json", "gateway_forward_log.csv", "timeseries.csv", "gateway_metrics.json"),
+                    ),
+                    aggregate_input_artifacts=adaptive_parameter_aggregate_inputs,
+                ),
+            ]
+        )
+
+    entries.sort(key=lambda entry: str(entry["asset_path"]))
+    return {
+        "schema_version": 1,
+        "inventory_scope": "current committed report figures/tables",
+        "entries": entries,
+    }
+
+
 def _format_delta(base: float, candidate: float) -> str:
     percent_delta = _percent_delta(base, candidate)
     if percent_delta is None:
@@ -259,6 +1096,308 @@ def _percent_delta(base: float, candidate: float) -> float | None:
     if math.isclose(base, 0.0):
         return None
     return ((candidate - base) / base) * 100
+
+
+def _summary_row_trial_run_dirs(row: dict[str, object]) -> list[Path]:
+    trial_run_dirs = row.get("trial_run_dirs")
+    if isinstance(trial_run_dirs, list) and trial_run_dirs:
+        return [Path(str(run_dir)) for run_dir in trial_run_dirs]
+    return [Path(str(row["run_dir"]))]
+
+
+def _sweep_name_from_run_dir(run_dir: Path) -> str:
+    if run_dir.name.startswith("trial-"):
+        return run_dir.parent.parent.name
+    return run_dir.parent.name
+
+
+def _summary_row_sweep_name(row: dict[str, object]) -> str:
+    return _sweep_name_from_run_dir(_summary_row_trial_run_dirs(row)[0])
+
+
+def _comparison_trial_run_dirs(row: dict[str, object], *prefixes: str) -> list[Path]:
+    run_dirs: list[Path] = []
+    for prefix in prefixes:
+        trial_run_dirs = row.get(f"{prefix}_trial_run_dirs")
+        if isinstance(trial_run_dirs, list) and trial_run_dirs:
+            run_dirs.extend(Path(str(run_dir)) for run_dir in trial_run_dirs)
+            continue
+        single_run_dir = row.get(f"{prefix}_run_dir")
+        if single_run_dir:
+            run_dirs.append(Path(str(single_run_dir)))
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for run_dir in run_dirs:
+        key = str(run_dir)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(run_dir)
+    return deduped
+
+
+def _comparison_trial_run_ids(row: dict[str, object], *prefixes: str) -> list[str]:
+    run_ids: list[str] = []
+    for prefix in prefixes:
+        trial_run_ids = row.get(f"{prefix}_trial_run_ids")
+        if isinstance(trial_run_ids, list) and trial_run_ids:
+            run_ids.extend(str(run_id) for run_id in trial_run_ids)
+            continue
+        single_run_dir = row.get(f"{prefix}_run_dir")
+        if single_run_dir:
+            run_ids.append(Path(str(single_run_dir)).name)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for run_id in run_ids:
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        deduped.append(run_id)
+    return deduped
+
+
+def _comparison_source_sweep_ids(rows: list[dict[str, object]], *prefixes: str) -> list[str]:
+    return sorted(
+        {
+            _sweep_name_from_run_dir(run_dir)
+            for row in rows
+            for run_dir in _comparison_trial_run_dirs(row, *prefixes)
+        }
+    )
+
+
+def _comparison_source_run_ids(rows: list[dict[str, object]], *prefixes: str) -> list[str]:
+    return sorted(
+        {
+            run_id
+            for row in rows
+            for run_id in _comparison_trial_run_ids(row, *prefixes)
+        }
+    )
+
+
+def _comparison_source_artifacts(
+    rows: list[dict[str, object]],
+    *,
+    prefixes: tuple[str, ...],
+    filenames: tuple[str, ...],
+) -> list[str]:
+    return sorted(
+        {
+            _source_path(run_dir / filename)
+            for row in rows
+            for run_dir in _comparison_trial_run_dirs(row, *prefixes)
+            for filename in filenames
+        }
+    )
+
+
+def _load_trial_records(row: dict[str, object]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for run_dir in _summary_row_trial_run_dirs(row):
+        summary = _load_json(run_dir / "summary.json")
+        manifest_path = run_dir / "manifest.json"
+        manifest = _load_json(manifest_path) if manifest_path.exists() else {}
+        summary["run_dir"] = str(run_dir)
+        summary["run_id"] = summary.get("run_id", manifest.get("run_id", run_dir.name))
+        summary["trial_id"] = summary.get("trial_id", manifest.get("trial_id"))
+        summary["trial_index"] = summary.get("trial_index", manifest.get("trial_index"))
+        summary["impairment_seed"] = summary.get("impairment_seed", manifest.get("impairment_seed"))
+        records.append(summary)
+    records.sort(
+        key=lambda record: (
+            int(record.get("trial_index") or 10**9),
+            str(record.get("run_id", record.get("run_dir", ""))),
+        )
+    )
+    return records
+
+
+def _collect_gateway_metric_numbers(
+    row: dict[str, object],
+    metric_name: str,
+) -> list[float]:
+    values: list[float] = []
+    for run_dir in _summary_row_trial_run_dirs(row):
+        metric_value = _load_gateway_metrics(run_dir).get(metric_name)
+        if metric_value is None:
+            continue
+        values.append(float(metric_value))
+    if values:
+        return values
+    fallback = row.get(metric_name)
+    if fallback is None:
+        return []
+    return [float(fallback)]
+
+
+def _collect_gateway_metric_texts(
+    row: dict[str, object],
+    metric_name: str,
+) -> list[str]:
+    values: list[str] = []
+    for run_dir in _summary_row_trial_run_dirs(row):
+        metric_value = _load_gateway_metrics(run_dir).get(metric_name)
+        if metric_value is None:
+            continue
+        text = str(metric_value)
+        if text:
+            values.append(text)
+    deduped: list[str] = []
+    for value in values:
+        if value not in deduped:
+            deduped.append(value)
+    return deduped
+
+
+def _condition_window_bounds(row: dict[str, object]) -> tuple[int, int]:
+    fallback_window_ms = int(row.get("effective_batch_window_ms", 0) or 0)
+    min_windows: list[int] = []
+    max_windows: list[int] = []
+    for run_dir in _summary_row_trial_run_dirs(row):
+        min_window_ms, max_window_ms = _trace_window_bounds(
+            _load_gateway_frame_trace(run_dir),
+            fallback_window_ms=fallback_window_ms,
+        )
+        min_windows.append(min_window_ms)
+        max_windows.append(max_window_ms)
+    if not min_windows:
+        return fallback_window_ms, fallback_window_ms
+    return min(min_windows), max(max_windows)
+
+
+def _trial_direction_details(
+    baseline_row: dict[str, object],
+    candidate_row: dict[str, object],
+    metric_name: str,
+) -> tuple[list[int], list[float], list[str]]:
+    baseline_trials = {
+        int(record["impairment_seed"]): record
+        for record in _load_trial_records(baseline_row)
+        if record.get("impairment_seed") is not None
+    }
+    candidate_trials = {
+        int(record["impairment_seed"]): record
+        for record in _load_trial_records(candidate_row)
+        if record.get("impairment_seed") is not None
+    }
+    shared_seeds = sorted(set(baseline_trials) & set(candidate_trials))
+    trial_delta_pcts: list[float] = []
+    trial_directions: list[str] = []
+    for seed in shared_seeds:
+        baseline_value = float(baseline_trials[seed][metric_name])
+        candidate_value = float(candidate_trials[seed][metric_name])
+        percent_delta = _percent_delta(baseline_value, candidate_value)
+        if percent_delta is not None:
+            trial_delta_pcts.append(round(percent_delta, 3))
+        if candidate_value < baseline_value:
+            trial_directions.append("lower")
+        elif candidate_value > baseline_value:
+            trial_directions.append("higher")
+        else:
+            trial_directions.append("equal")
+    return shared_seeds, trial_delta_pcts, trial_directions
+
+
+def _trial_direction_consistent(trial_directions: list[str]) -> bool:
+    return len(set(trial_directions)) <= 1
+
+
+def _byte_reduction_scenario_classification(
+    baseline_row: dict[str, object],
+    candidate_row: dict[str, object],
+) -> str:
+    _, _, trial_directions = _trial_direction_details(
+        baseline_row,
+        candidate_row,
+        "proxy_downstream_bytes_out",
+    )
+    if trial_directions and all(direction == "lower" for direction in trial_directions):
+        return "supports_byte_reduction"
+    if trial_directions and all(direction == "higher" for direction in trial_directions):
+        return "contradicts_byte_reduction"
+    return "mixed"
+
+
+def _byte_claim_status(bandwidth_rows: list[dict[str, object]]) -> dict[str, str]:
+    for variant in ("v2", "v4"):
+        variant_rows = [row for row in bandwidth_rows if row["variant"] == variant]
+        clean_supported = any(
+            row["scenario"] == "clean" and row["scenario_byte_claim_classification"] == "supports_byte_reduction"
+            for row in variant_rows
+        )
+        impaired_supported_count = sum(
+            1
+            for row in variant_rows
+            if row["scenario"] != "clean" and row["scenario_byte_claim_classification"] == "supports_byte_reduction"
+        )
+        if clean_supported and impaired_supported_count >= 2:
+            return {"status": "supported", "variant": variant}
+    return {"status": "fallback", "fallback_wording": BYTE_CLAIM_FALLBACK_WORDING}
+
+
+def _adaptive_threshold_flags(
+    *,
+    baseline_row: dict[str, object],
+    candidate_row: dict[str, object],
+    candidate_min_window_ms: int,
+    candidate_max_window_ms: int,
+    candidate_increase_events: float,
+    candidate_decrease_events: float,
+) -> dict[str, object]:
+    inter_frame_gap_stddev_delta_ms = round(
+        float(candidate_row["proxy_inter_frame_gap_stddev_ms"]) - float(baseline_row["proxy_inter_frame_gap_stddev_ms"]),
+        3,
+    )
+    frame_rate_stddev_delta_per_s = round(
+        float(candidate_row["proxy_frame_rate_stddev_per_s"]) - float(baseline_row["proxy_frame_rate_stddev_per_s"]),
+        3,
+    )
+    latency_p95_delta_pct = _percent_delta(
+        float(baseline_row["latency_p95_ms"]),
+        float(candidate_row["latency_p95_ms"]),
+    )
+    downstream_bytes_delta_pct_raw = _percent_delta(
+        float(baseline_row["proxy_downstream_bytes_out"]),
+        float(candidate_row["proxy_downstream_bytes_out"]),
+    )
+    window_adjusted = (
+        candidate_min_window_ms != candidate_max_window_ms
+        or not math.isclose(candidate_increase_events, 0.0)
+        or not math.isclose(candidate_decrease_events, 0.0)
+    )
+    stability_improvements: list[str] = []
+    if inter_frame_gap_stddev_delta_ms < 0:
+        stability_improvements.append("proxy_inter_frame_gap_stddev_ms")
+    if frame_rate_stddev_delta_per_s < 0:
+        stability_improvements.append("proxy_frame_rate_stddev_per_s")
+    latency_guardrail_ok = latency_p95_delta_pct is not None and latency_p95_delta_pct <= 10.0
+    byte_guardrail_ok = downstream_bytes_delta_pct_raw is not None and downstream_bytes_delta_pct_raw <= 10.0
+    return {
+        "window_adjusted": window_adjusted,
+        "stability_improvements": stability_improvements,
+        "latency_guardrail_ok": latency_guardrail_ok,
+        "byte_guardrail_ok": byte_guardrail_ok,
+        "inter_frame_gap_stddev_delta_ms": inter_frame_gap_stddev_delta_ms,
+        "frame_rate_stddev_delta_per_s": frame_rate_stddev_delta_per_s,
+        "latency_p95_delta_pct_raw": latency_p95_delta_pct,
+        "downstream_bytes_delta_pct_raw": downstream_bytes_delta_pct_raw,
+    }
+
+
+def _adaptive_claim_status(parameter_rows: list[dict[str, object]]) -> dict[str, str]:
+    rows_by_config: dict[str, list[dict[str, object]]] = {}
+    for row in parameter_rows:
+        rows_by_config.setdefault(str(row["config_id"]), []).append(row)
+    for config_id, config_rows in rows_by_config.items():
+        supporting_rows = [
+            row
+            for row in config_rows
+            if row["window_adjusted"] and row["stability_improved"] and row["latency_guardrail_ok"] and row["byte_guardrail_ok"]
+        ]
+        if len(supporting_rows) >= 2:
+            return {"status": "supported", "config_id": config_id}
+    return {"status": "fallback", "fallback_wording": ADAPTIVE_CLAIM_FALLBACK_WORDING}
 
 
 def _latency_stats(row: dict[str, object], *, prefix: str = "latency") -> dict[str, float]:
@@ -276,30 +1415,70 @@ def _build_intel_bandwidth_vs_v0_rows(intel_rows: list[dict[str, object]]) -> li
         baseline = _select_row(intel_rows, variant="v0", scenario=scenario, mqtt_qos=0)
         for variant in ("v2", "v4"):
             candidate = _select_row(intel_rows, variant=variant, scenario=scenario, mqtt_qos=0)
+            shared_seeds, trial_delta_pcts, trial_directions = _trial_direction_details(
+                baseline,
+                candidate,
+                "proxy_downstream_bytes_out",
+            )
             rows.append(
                 {
                     "scenario": scenario,
                     "variant": variant,
-                    "baseline_downstream_bytes_out": int(baseline["proxy_downstream_bytes_out"]),
-                    "variant_downstream_bytes_out": int(candidate["proxy_downstream_bytes_out"]),
+                    "baseline_n": int(baseline.get("n", 1) or 1),
+                    "variant_n": int(candidate.get("n", 1) or 1),
+                    "shared_impairment_seeds": shared_seeds,
+                    "baseline_trial_run_ids": list(baseline.get("trial_run_ids", [baseline["run_id"]])),
+                    "variant_trial_run_ids": list(candidate.get("trial_run_ids", [candidate["run_id"]])),
+                    "baseline_downstream_bytes_out": round(float(baseline["proxy_downstream_bytes_out"]), 3),
+                    "baseline_downstream_bytes_out_stddev": round(
+                        float(baseline.get("proxy_downstream_bytes_out_stddev", 0.0)),
+                        3,
+                    ),
+                    "variant_downstream_bytes_out": round(float(candidate["proxy_downstream_bytes_out"]), 3),
+                    "variant_downstream_bytes_out_stddev": round(
+                        float(candidate.get("proxy_downstream_bytes_out_stddev", 0.0)),
+                        3,
+                    ),
                     "downstream_bytes_delta_pct": _format_delta(
                         float(baseline["proxy_downstream_bytes_out"]),
                         float(candidate["proxy_downstream_bytes_out"]),
                     ),
-                    "baseline_max_bandwidth_bytes_per_s": int(baseline["max_bandwidth_bytes_per_s"]),
-                    "variant_max_bandwidth_bytes_per_s": int(candidate["max_bandwidth_bytes_per_s"]),
+                    "trial_byte_delta_pcts": trial_delta_pcts,
+                    "trial_direction_consistent": _trial_direction_consistent(trial_directions),
+                    "trial_directions": trial_directions,
+                    "scenario_byte_claim_classification": _byte_reduction_scenario_classification(baseline, candidate),
+                    "baseline_max_bandwidth_bytes_per_s": round(float(baseline["max_bandwidth_bytes_per_s"]), 3),
+                    "baseline_max_bandwidth_bytes_per_s_stddev": round(
+                        float(baseline.get("max_bandwidth_bytes_per_s_stddev", 0.0)),
+                        3,
+                    ),
+                    "variant_max_bandwidth_bytes_per_s": round(float(candidate["max_bandwidth_bytes_per_s"]), 3),
+                    "variant_max_bandwidth_bytes_per_s_stddev": round(
+                        float(candidate.get("max_bandwidth_bytes_per_s_stddev", 0.0)),
+                        3,
+                    ),
                     "max_bandwidth_delta_pct": _format_delta(
                         float(baseline["max_bandwidth_bytes_per_s"]),
                         float(candidate["max_bandwidth_bytes_per_s"]),
                     ),
-                    "baseline_downstream_frames_out": int(baseline["proxy_downstream_frames_out"]),
-                    "variant_downstream_frames_out": int(candidate["proxy_downstream_frames_out"]),
+                    "baseline_downstream_frames_out": round(float(baseline["proxy_downstream_frames_out"]), 3),
+                    "baseline_downstream_frames_out_stddev": round(
+                        float(baseline.get("proxy_downstream_frames_out_stddev", 0.0)),
+                        3,
+                    ),
+                    "variant_downstream_frames_out": round(float(candidate["proxy_downstream_frames_out"]), 3),
+                    "variant_downstream_frames_out_stddev": round(
+                        float(candidate.get("proxy_downstream_frames_out_stddev", 0.0)),
+                        3,
+                    ),
                     "downstream_frames_delta_pct": _format_delta(
                         float(baseline["proxy_downstream_frames_out"]),
                         float(candidate["proxy_downstream_frames_out"]),
                     ),
                     **_latency_stats(baseline, prefix="baseline_latency"),
                     **_latency_stats(candidate, prefix="variant_latency"),
+                    "baseline_latency_p95_ms_stddev": round(float(baseline.get("latency_p95_ms_stddev", 0.0)), 3),
+                    "variant_latency_p95_ms_stddev": round(float(candidate.get("latency_p95_ms_stddev", 0.0)), 3),
                 }
             )
     return rows
@@ -670,23 +1849,34 @@ def _build_intel_adaptive_rows(rows: list[dict[str, object]]) -> list[dict[str, 
         if v2_row is None or v3_row is None:
             missing_pairs.append(scenario)
             continue
-        v2_trace = _load_gateway_frame_trace(Path(str(v2_row["run_dir"])))
-        v3_trace = _load_gateway_frame_trace(Path(str(v3_row["run_dir"])))
-        v2_min_window_ms, v2_max_window_ms = _trace_window_bounds(
-            v2_trace,
-            fallback_window_ms=int(v2_row.get("effective_batch_window_ms", 0)),
+        v2_min_window_ms, v2_max_window_ms = _condition_window_bounds(v2_row)
+        v3_min_window_ms, v3_max_window_ms = _condition_window_bounds(v3_row)
+        v3_increase_events = _collect_gateway_metric_numbers(v3_row, "adaptive_window_increase_events")
+        v3_decrease_events = _collect_gateway_metric_numbers(v3_row, "adaptive_window_decrease_events")
+        threshold_flags = _adaptive_threshold_flags(
+            baseline_row=v2_row,
+            candidate_row=v3_row,
+            candidate_min_window_ms=v3_min_window_ms,
+            candidate_max_window_ms=v3_max_window_ms,
+            candidate_increase_events=mean(v3_increase_events) if v3_increase_events else 0.0,
+            candidate_decrease_events=mean(v3_decrease_events) if v3_decrease_events else 0.0,
         )
-        v3_min_window_ms, v3_max_window_ms = _trace_window_bounds(
-            v3_trace,
-            fallback_window_ms=int(v3_row.get("effective_batch_window_ms", 0)),
-        )
-        v3_metrics = _load_gateway_metrics(Path(str(v3_row["run_dir"])))
         comparison_rows.append(
             {
                 "scenario": scenario,
+                "v2_n": int(v2_row.get("n", 1) or 1),
+                "v3_n": int(v3_row.get("n", 1) or 1),
+                "v2_trial_run_ids": list(v2_row.get("trial_run_ids", [v2_row["run_id"]])),
+                "v3_trial_run_ids": list(v3_row.get("trial_run_ids", [v3_row["run_id"]])),
+                "v2_trial_run_dirs": [str(path) for path in _summary_row_trial_run_dirs(v2_row)],
+                "v3_trial_run_dirs": [str(path) for path in _summary_row_trial_run_dirs(v3_row)],
                 **{f"v2_{key}": value for key, value in _latency_stats(v2_row).items()},
                 **{f"v3_{key}": value for key, value in _latency_stats(v3_row).items()},
                 "latency_p95_delta_ms": round(float(v3_row["latency_p95_ms"]) - float(v2_row["latency_p95_ms"]), 3),
+                "latency_p95_delta_pct": _format_delta(
+                    float(v2_row["latency_p95_ms"]),
+                    float(v3_row["latency_p95_ms"]),
+                ),
                 "v2_stale_fraction": float(v2_row.get("stale_fraction", 0.0)),
                 "v3_stale_fraction": float(v3_row.get("stale_fraction", 0.0)),
                 "stale_fraction_delta": round(
@@ -715,9 +1905,26 @@ def _build_intel_adaptive_rows(rows: list[dict[str, object]]) -> list[dict[str, 
                 "v2_max_effective_batch_window_ms": v2_max_window_ms,
                 "v3_min_effective_batch_window_ms": v3_min_window_ms,
                 "v3_max_effective_batch_window_ms": v3_max_window_ms,
-                "v3_adaptive_window_increase_events": int(v3_metrics.get("adaptive_window_increase_events", 0)),
-                "v3_adaptive_window_decrease_events": int(v3_metrics.get("adaptive_window_decrease_events", 0)),
-                "v3_last_adaptation_reason": str(v3_metrics.get("last_adaptation_reason", "")),
+                "v2_proxy_inter_frame_gap_stddev_ms": round(float(v2_row.get("proxy_inter_frame_gap_stddev_ms", 0.0)), 3),
+                "v3_proxy_inter_frame_gap_stddev_ms": round(float(v3_row.get("proxy_inter_frame_gap_stddev_ms", 0.0)), 3),
+                "v2_proxy_frame_rate_stddev_per_s": round(float(v2_row.get("proxy_frame_rate_stddev_per_s", 0.0)), 3),
+                "v3_proxy_frame_rate_stddev_per_s": round(float(v3_row.get("proxy_frame_rate_stddev_per_s", 0.0)), 3),
+                "inter_frame_gap_stddev_delta_ms": threshold_flags["inter_frame_gap_stddev_delta_ms"],
+                "frame_rate_stddev_delta_per_s": threshold_flags["frame_rate_stddev_delta_per_s"],
+                "v3_adaptive_window_increase_events": round(mean(v3_increase_events), 3) if v3_increase_events else 0.0,
+                "v3_adaptive_window_decrease_events": round(mean(v3_decrease_events), 3) if v3_decrease_events else 0.0,
+                "v3_last_adaptation_reasons": _collect_gateway_metric_texts(v3_row, "last_adaptation_reason"),
+                "window_adjusted": threshold_flags["window_adjusted"],
+                "stability_improved": bool(threshold_flags["stability_improvements"]),
+                "stability_improvement_metrics": threshold_flags["stability_improvements"],
+                "latency_guardrail_ok": threshold_flags["latency_guardrail_ok"],
+                "byte_guardrail_ok": threshold_flags["byte_guardrail_ok"],
+                "scenario_supports_positive_adaptive_claim": (
+                    threshold_flags["window_adjusted"]
+                    and bool(threshold_flags["stability_improvements"])
+                    and threshold_flags["latency_guardrail_ok"]
+                    and threshold_flags["byte_guardrail_ok"]
+                ),
                 "v2_run_dir": str(v2_row["run_dir"]),
                 "v3_run_dir": str(v3_row["run_dir"]),
             }
@@ -739,11 +1946,147 @@ def _describe_adaptive_scenario(rows: list[dict[str, object]], scenario: str) ->
             f"with {row['v3_adaptive_window_increase_events']} increase events and "
             f"{row['v3_adaptive_window_decrease_events']} decrease events"
         )
+    last_reasons = row.get("v3_last_adaptation_reasons", [])
+    last_reason_clause = (
+        f"The last adaptation reasons across trials were `{'; '.join(str(reason) for reason in last_reasons)}`."
+        if isinstance(last_reasons, list) and last_reasons
+        else ""
+    )
     return (
         f"Under {scenario}, adaptive V3 changed stale fraction by {row['stale_fraction_delta']:+.6f}, "
         f"max rendered update rate by {row['update_rate_delta_pct']}, downstream frames by {row['downstream_frames_delta_pct']}, "
         f"and downstream bytes by {row['downstream_bytes_delta_pct']} versus fixed-window V2. "
-        f"{window_clause}. The last adaptation reason was `{row['v3_last_adaptation_reason']}`."
+        f"{window_clause}. {last_reason_clause}"
+    )
+
+
+def _build_intel_v3_adaptive_parameter_sweep_rows(
+    baseline_rows: list[dict[str, object]],
+    parameter_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    baseline_by_scenario = {
+        str(row["scenario"]): row
+        for row in baseline_rows
+        if str(row.get("variant", "")) == "v2" and int(row.get("mqtt_qos", 0) or 0) == 0
+    }
+    comparison_rows: list[dict[str, object]] = []
+    for parameter_row in sorted(
+        parameter_rows,
+        key=lambda row: (
+            str(row.get("scenario", "")),
+            int(row.get("adaptive_send_slow_ms", 0) or 0),
+            int(row.get("adaptive_step_up_ms", 0) or 0),
+            int(row.get("adaptive_max_batch_window_ms", 0) or 0),
+        ),
+    ):
+        scenario = str(parameter_row.get("scenario", ""))
+        baseline_row = baseline_by_scenario.get(scenario)
+        if baseline_row is None:
+            raise ValueError(f"Missing replicated V2 baseline row for adaptive parameter sweep scenario: {scenario}")
+        v3_min_window_ms, v3_max_window_ms = _condition_window_bounds(parameter_row)
+        v3_increase_events = _collect_gateway_metric_numbers(parameter_row, "adaptive_window_increase_events")
+        v3_decrease_events = _collect_gateway_metric_numbers(parameter_row, "adaptive_window_decrease_events")
+        threshold_flags = _adaptive_threshold_flags(
+            baseline_row=baseline_row,
+            candidate_row=parameter_row,
+            candidate_min_window_ms=v3_min_window_ms,
+            candidate_max_window_ms=v3_max_window_ms,
+            candidate_increase_events=mean(v3_increase_events) if v3_increase_events else 0.0,
+            candidate_decrease_events=mean(v3_decrease_events) if v3_decrease_events else 0.0,
+        )
+        comparison_rows.append(
+            {
+                "config_id": str(parameter_row["condition_id"]).split("-")[-1],
+                "scenario": scenario,
+                "baseline_v2_n": int(baseline_row.get("n", 1) or 1),
+                "v3_n": int(parameter_row.get("n", 1) or 1),
+                "adaptive_send_slow_ms": int(parameter_row.get("adaptive_send_slow_ms", 0) or 0),
+                "adaptive_step_up_ms": int(parameter_row.get("adaptive_step_up_ms", 0) or 0),
+                "adaptive_max_batch_window_ms": int(parameter_row.get("adaptive_max_batch_window_ms", 0) or 0),
+                "baseline_v2_trial_run_ids": list(baseline_row.get("trial_run_ids", [baseline_row["run_id"]])),
+                "v3_trial_run_ids": list(parameter_row.get("trial_run_ids", [parameter_row["run_id"]])),
+                "baseline_v2_trial_run_dirs": [str(path) for path in _summary_row_trial_run_dirs(baseline_row)],
+                "v3_trial_run_dirs": [str(path) for path in _summary_row_trial_run_dirs(parameter_row)],
+                **{f"baseline_v2_{key}": value for key, value in _latency_stats(baseline_row).items()},
+                **{f"v3_{key}": value for key, value in _latency_stats(parameter_row).items()},
+                "latency_p95_delta_ms": round(
+                    float(parameter_row["latency_p95_ms"]) - float(baseline_row["latency_p95_ms"]),
+                    3,
+                ),
+                "latency_p95_delta_pct": _format_delta(
+                    float(baseline_row["latency_p95_ms"]),
+                    float(parameter_row["latency_p95_ms"]),
+                ),
+                "baseline_v2_proxy_downstream_bytes_out": round(float(baseline_row["proxy_downstream_bytes_out"]), 3),
+                "v3_proxy_downstream_bytes_out": round(float(parameter_row["proxy_downstream_bytes_out"]), 3),
+                "downstream_bytes_delta_pct": _format_delta(
+                    float(baseline_row["proxy_downstream_bytes_out"]),
+                    float(parameter_row["proxy_downstream_bytes_out"]),
+                ),
+                "baseline_v2_proxy_downstream_frames_out": round(float(baseline_row["proxy_downstream_frames_out"]), 3),
+                "v3_proxy_downstream_frames_out": round(float(parameter_row["proxy_downstream_frames_out"]), 3),
+                "downstream_frames_delta_pct": _format_delta(
+                    float(baseline_row["proxy_downstream_frames_out"]),
+                    float(parameter_row["proxy_downstream_frames_out"]),
+                ),
+                "baseline_v2_proxy_inter_frame_gap_stddev_ms": round(
+                    float(baseline_row.get("proxy_inter_frame_gap_stddev_ms", 0.0)),
+                    3,
+                ),
+                "v3_proxy_inter_frame_gap_stddev_ms": round(
+                    float(parameter_row.get("proxy_inter_frame_gap_stddev_ms", 0.0)),
+                    3,
+                ),
+                "baseline_v2_proxy_frame_rate_stddev_per_s": round(
+                    float(baseline_row.get("proxy_frame_rate_stddev_per_s", 0.0)),
+                    3,
+                ),
+                "v3_proxy_frame_rate_stddev_per_s": round(
+                    float(parameter_row.get("proxy_frame_rate_stddev_per_s", 0.0)),
+                    3,
+                ),
+                "inter_frame_gap_stddev_delta_ms": threshold_flags["inter_frame_gap_stddev_delta_ms"],
+                "frame_rate_stddev_delta_per_s": threshold_flags["frame_rate_stddev_delta_per_s"],
+                "v3_min_effective_batch_window_ms": v3_min_window_ms,
+                "v3_max_effective_batch_window_ms": v3_max_window_ms,
+                "v3_adaptive_window_increase_events": round(mean(v3_increase_events), 3) if v3_increase_events else 0.0,
+                "v3_adaptive_window_decrease_events": round(mean(v3_decrease_events), 3) if v3_decrease_events else 0.0,
+                "v3_last_adaptation_reasons": _collect_gateway_metric_texts(parameter_row, "last_adaptation_reason"),
+                "window_adjusted": threshold_flags["window_adjusted"],
+                "stability_improved": bool(threshold_flags["stability_improvements"]),
+                "stability_improvement_metrics": threshold_flags["stability_improvements"],
+                "latency_guardrail_ok": threshold_flags["latency_guardrail_ok"],
+                "byte_guardrail_ok": threshold_flags["byte_guardrail_ok"],
+                "scenario_supports_positive_adaptive_claim": (
+                    threshold_flags["window_adjusted"]
+                    and bool(threshold_flags["stability_improvements"])
+                    and threshold_flags["latency_guardrail_ok"]
+                    and threshold_flags["byte_guardrail_ok"]
+                ),
+            }
+        )
+    return comparison_rows
+
+
+def _describe_delay_jitter_stability(rows: list[dict[str, object]]) -> str:
+    selected_rows = {
+        str(row["variant"]): row
+        for row in rows
+        if row["comparison_family"] == "intel_primary"
+        and row["scenario"] == "delay_50ms_jitter20ms"
+        and int(row["mqtt_qos"]) == 0
+    }
+    v0_row = selected_rows["v0"]
+    v2_row = selected_rows["v2"]
+    v4_row = selected_rows["v4"]
+    return (
+        f"On the Intel delay_50ms_jitter20ms qos0 path, the proxy-side source-of-truth table shows "
+        f"V0 with inter-frame-gap p95 {v0_row['proxy_inter_frame_gap_p95_ms']} ms and frame-rate stddev "
+        f"{v0_row['proxy_frame_rate_stddev_per_s']} /s, while V2 reports {v2_row['proxy_inter_frame_gap_p95_ms']} ms "
+        f"and {v2_row['proxy_frame_rate_stddev_per_s']} /s, and V4 reports {v4_row['proxy_inter_frame_gap_p95_ms']} ms "
+        f"and {v4_row['proxy_frame_rate_stddev_per_s']} /s. The bounded interpretation is pacing shape rather than "
+        "lower delay: smart variants emit fewer downstream frames, and the stability evidence should be read from "
+        "proxy inter-frame-gap and frame-rate variability rather than dashboard row cadence."
     )
 
 
@@ -760,6 +2103,32 @@ def _plot_latency_cdf(rows: list[dict[str, object]], *, scenario: str, mqtt_qos:
     plt.xlabel("Latency (ms)")
     plt.ylabel("CDF")
     plt.title(f"Latency CDF ({scenario}, qos{mqtt_qos})")
+    plt.legend()
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150)
+    plt.close(figure)
+
+
+def _plot_inter_frame_gap_cdf(
+    rows: list[dict[str, object]],
+    *,
+    scenario: str,
+    mqtt_qos: int,
+    output_path: Path,
+) -> None:
+    figure = plt.figure(figsize=(8, 5))
+    for variant in PAPER_MAIN_VARIANTS:
+        row = _select_row(rows, variant=variant, scenario=scenario, mqtt_qos=mqtt_qos)
+        samples = collect_proxy_inter_frame_gaps(Path(str(row["run_dir"])))
+        if not samples:
+            continue
+        ordered = sorted(samples)
+        cdf = [(index + 1) / len(ordered) for index in range(len(ordered))]
+        plt.plot(ordered, cdf, label=variant.upper())
+    plt.xlabel("Inter-frame gap (ms)")
+    plt.ylabel("CDF")
+    plt.title(f"Proxy inter-frame-gap CDF ({scenario}, qos{mqtt_qos})")
     plt.legend()
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -817,19 +2186,12 @@ def _plot_outage_age_over_time(rows: list[dict[str, object]], *, output_path: Pa
         color, label = variant_styles[variant]
         axis.plot(x_values, y_values, marker="o", color=color, label=label)
 
-    phase_colors = {
-        "steady-before-outage": "#d9edf7",
-        "outage": "#f2dede",
-        "recovery": "#dff0d8",
-    }
     phase_end = max_relative_second if max_relative_second > 0 else 15.0
-    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
-        clipped_end_s = phase_end if end_s is None else min(end_s, phase_end)
-        if clipped_end_s <= start_s:
-            continue
-        axis.axvspan(start_s, clipped_end_s, color=phase_colors[phase_name], alpha=0.2)
-    axis.axvline(10.0, color="0.4", linestyle="--", linewidth=1)
-    axis.axvline(15.0, color="0.4", linestyle="--", linewidth=1)
+    _shade_phase_windows(
+        axis,
+        phase_windows=_scenario_phase_windows(OUTAGE_SCENARIO, total_duration_s=phase_end),
+        phase_end_s=phase_end,
+    )
 
     axis.set_xlabel("Relative second from first proxy upstream receive")
     axis.set_ylabel("Frame mean age at display (ms)")
@@ -863,19 +2225,12 @@ def _plot_main_outage_frame_rate(rows: list[dict[str, object]], *, output_path: 
         color, label = styles[variant]
         axis.plot(x_values, y_values, marker="o", color=color, label=label)
 
-    phase_colors = {
-        "steady-before-outage": "#d9edf7",
-        "outage": "#f2dede",
-        "recovery": "#dff0d8",
-    }
     phase_end = max_relative_second if max_relative_second > 0 else 20.0
-    for phase_name, start_s, end_s in OUTAGE_PHASE_WINDOWS:
-        clipped_end_s = phase_end if end_s is None else min(end_s, phase_end)
-        if clipped_end_s <= start_s:
-            continue
-        axis.axvspan(start_s, clipped_end_s, color=phase_colors[phase_name], alpha=0.2)
-    axis.axvline(10.0, color="0.4", linestyle="--", linewidth=1)
-    axis.axvline(15.0, color="0.4", linestyle="--", linewidth=1)
+    _shade_phase_windows(
+        axis,
+        phase_windows=_scenario_phase_windows(OUTAGE_SCENARIO, total_duration_s=phase_end),
+        phase_end_s=phase_end,
+    )
 
     axis.set_xlabel("Relative second from first proxy frame")
     axis.set_ylabel("Downstream frames per second")
@@ -1120,8 +2475,10 @@ def _build_key_claims(
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_parameter_rows: list[dict[str, object]] | None = None,
 ) -> str:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    byte_claim_status = _byte_claim_status(bandwidth_rows)
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
     clean_v2 = _select_row(intel_rows, variant="v2", scenario="clean", mqtt_qos=0)
     clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
@@ -1143,7 +2500,8 @@ def _build_key_claims(
 
     lines = [
         (
-            "- Intel qos0 downstream payload bytes did not drop below V0 in the paper-ready bandwidth comparison: "
+            f"- Section 7 byte-claim classification: `{byte_claim_status.get('fallback_wording', 'supported')}` "
+            "Intel qos0 downstream payload bytes did not drop below V0 in the paper-ready bandwidth comparison: "
             f"V2 changed by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}, "
             f"while V4 changed by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. "
             "Both smart variants still cut downstream frame count by roughly 95%-97% across those same scenarios."
@@ -1218,6 +2576,22 @@ def _build_key_claims(
                 )
             ),
         )
+    if intel_adaptive_parameter_rows is not None:
+        adaptive_claim_status = _adaptive_claim_status(intel_adaptive_parameter_rows)
+        supporting_rows = [
+            row
+            for row in intel_adaptive_parameter_rows
+            if row["scenario_supports_positive_adaptive_claim"]
+        ]
+        lines.insert(
+            4,
+            (
+                f"- Section 7 adaptive-claim classification: `{adaptive_claim_status.get('fallback_wording', 'supported')}` "
+                f"The bounded V3 parameter sweep produced {len(supporting_rows)} scenario-level rows that met the window-adjustment, "
+                "stability-improvement, latency, and byte guardrails. "
+                "The paper-facing sweep summary is `report/assets/tables/intel_v3_adaptive_parameter_sweep.md`."
+            ),
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -1225,13 +2599,39 @@ def _build_claim_guardrail_review(
     intel_rows: list[dict[str, object]],
     intel_qos_rows: list[dict[str, object]],
     intel_outage_freshness_rows: list[dict[str, object]],
+    intel_adaptive_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_parameter_rows: list[dict[str, object]] | None = None,
 ) -> str:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    byte_claim_status = _byte_claim_status(bandwidth_rows)
+    adaptive_claim_status = _adaptive_claim_status(intel_adaptive_parameter_rows or [])
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
     clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
     qos1_duplicates = sum(int(row["qos1_duplicates_dropped"]) for row in intel_qos_rows)
 
     table_rows = [
+        {
+            "guardrail": "Do not claim downstream byte reduction unless replicated bytes fall below V0 across the checklist threshold",
+            "blocked_unbounded_claim": "Agrasandhani reduces downstream payload bytes.",
+            "measured_evidence": (
+                f"Replicated Intel byte-audit status is `{byte_claim_status['status']}`; "
+                f"clean/V2 delta is {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}, "
+                f"and clean/V4 delta is {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}."
+            ),
+            "safe_wording": byte_claim_status.get("fallback_wording", "Keep the byte claim variant-specific and explicitly replicated."),
+        },
+        {
+            "guardrail": "Do not headline adaptive control unless the bounded sweep shows real adjustment plus 2-of-3 guarded wins",
+            "blocked_unbounded_claim": "Adaptive control materially outperformed fixed-window batching.",
+            "measured_evidence": (
+                f"Default adaptive comparison rows cover {len(intel_adaptive_rows or [])} scenarios and bounded parameter-sweep status is "
+                f"`{adaptive_claim_status['status']}`."
+            ),
+            "safe_wording": adaptive_claim_status.get(
+                "fallback_wording",
+                "Name the supporting config explicitly and keep the claim limited to the measured scenarios.",
+            ),
+        },
         {
             "guardrail": "Do not claim lower latency unless measured",
             "blocked_unbounded_claim": "Agrasandhani lowers latency overall.",
@@ -1290,6 +2690,98 @@ def _build_claim_guardrail_review(
     )
 
 
+def _build_claim_to_evidence_map(
+    *,
+    intel_sweep_dir: Path,
+    batch_sweep_dir: Path | None = None,
+    isolation_sweep_dir: Path | None = None,
+    adaptive_sweep_dir: Path | None = None,
+    adaptive_parameter_sweep_dir: Path | None = None,
+) -> str:
+    adaptive_source = (
+        f"{adaptive_sweep_dir}/v2-qos0-*; {adaptive_sweep_dir}/v3-qos0-*"
+        if adaptive_sweep_dir is not None
+        else "report/assets/tables/intel_jitter_summary.csv"
+    )
+    adaptive_parameter_source = (
+        f"; {adaptive_parameter_sweep_dir}/v3-qos0-*"
+        if adaptive_parameter_sweep_dir is not None
+        else ""
+    )
+    batch_source = (
+        f"{batch_sweep_dir}/*/summary.json"
+        if batch_sweep_dir is not None
+        else "report/assets/tables/intel_v2_batch_window_tradeoff.csv"
+    )
+    isolation_source = (
+        f"{isolation_sweep_dir}/*/summary.json"
+        if isolation_sweep_dir is not None
+        else "report/assets/tables/intel_v1_vs_v2_isolation.csv"
+    )
+    rows = [
+        (
+            "Smart gateway variants reduce downstream frame rate (~95-97%) vs naive forwarding and stabilize stream around outage/recovery.",
+            "main_outage_frame_rate.png; intel_bandwidth_vs_v0.md",
+            f"{intel_sweep_dir}/*/timeseries.csv; report/assets/tables/intel_bandwidth_vs_v0.csv",
+            "experiments/build_report_assets.py",
+        ),
+        (
+            "Proxy inter-frame gaps are the canonical jitter/stability source of truth; delay/jitter evidence is read from proxy sent-frame timing, not dashboard row cadence.",
+            "intel_delay_qos0_inter_frame_gap_cdf.png; intel_jitter_summary.md",
+            f"{intel_sweep_dir}/*/proxy_frame_log.csv; {adaptive_source}",
+            "experiments/analyze_run.py; experiments/build_report_assets.py",
+        ),
+        (
+            BYTE_CLAIM_FALLBACK_WORDING,
+            "intel_bandwidth_vs_v0.md; main_outage_frame_rate.png",
+            "report/assets/tables/intel_bandwidth_vs_v0.csv",
+            "experiments/build_report_assets.py",
+        ),
+        (
+            "Larger batch windows trade higher latency for fewer frames and different byte volume.",
+            "intel_v2_batch_window_tradeoff.png; intel_v2_batch_window_tradeoff.md",
+            batch_source,
+            "experiments/run_batch_window_sweep.py; experiments/build_report_assets.py",
+        ),
+        (
+            "Dedup/compaction had small or mixed effects beyond batching.",
+            "intel_v1_vs_v2_isolation.png; intel_v1_vs_v2_isolation.md",
+            isolation_source,
+            "experiments/run_v1_v2_isolation_sweep.py; experiments/build_report_assets.py",
+        ),
+        (
+            ADAPTIVE_CLAIM_FALLBACK_WORDING,
+            "intel_v2_vs_v3_adaptive_impairment.png; intel_v2_vs_v3_adaptive_impairment.md; intel_v3_adaptive_parameter_sweep.md",
+            "report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv; report/assets/tables/intel_v3_adaptive_parameter_sweep.csv",
+            "experiments/run_adaptive_impairment_sweep.py; experiments/build_report_assets.py",
+        ),
+        (
+            "Last-known-good improves visibility/retention but not freshness (age increases).",
+            "intel_outage_qos0_v0_vs_v4_age_over_time.png; intel_outage_qos0_v0_vs_v4_freshness.md",
+            f"{intel_sweep_dir}/v0-qos0-outage_5s/*; {intel_sweep_dir}/v4-qos0-outage_5s/*",
+            "experiments/build_report_assets.py",
+        ),
+        (
+            "QoS0 vs QoS1 produced minimal differences in this setup.",
+            "intel_qos_comparison.png; intel_qos_comparison.md",
+            "report/assets/tables/intel_qos_comparison.csv",
+            "experiments/build_report_assets.py",
+        ),
+    ]
+    lines = [
+        "# Claim To Evidence Map",
+        "",
+        "Each major paper claim is mapped to generated artifacts, source data, and generation scripts.",
+        "",
+        "| Claim | Figure/Table | Source CSV/Log | Generated By |",
+        "| --- | --- | --- | --- |",
+    ]
+    for claim, artifact, source, script in rows:
+        lines.append(f"| {claim} | {artifact} | {source} | {script} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _write_final_report(
     *,
     intel_sweep_dir: Path,
@@ -1299,11 +2791,15 @@ def _write_final_report(
     aot_rows: list[dict[str, object]],
     intel_outage_freshness_rows: list[dict[str, object]],
     intel_qos_rows: list[dict[str, object]],
+    intel_jitter_rows: list[dict[str, object]],
     intel_batch_rows: list[dict[str, object]] | None = None,
     intel_v1_v2_rows: list[dict[str, object]] | None = None,
     intel_adaptive_rows: list[dict[str, object]] | None = None,
+    intel_adaptive_parameter_rows: list[dict[str, object]] | None = None,
 ) -> None:
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
+    byte_claim_status = _byte_claim_status(bandwidth_rows)
+    adaptive_claim_status = _adaptive_claim_status(intel_adaptive_parameter_rows or [])
     clean_v0 = _select_row(intel_rows, variant="v0", scenario="clean", mqtt_qos=0)
     clean_v4 = _select_row(intel_rows, variant="v4", scenario="clean", mqtt_qos=0)
     outage_v0 = _select_row(intel_rows, variant="v0", scenario="outage_5s", mqtt_qos=1)
@@ -1318,7 +2814,7 @@ def _write_final_report(
 
 ## Abstract
 
-Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while the adaptive V4 path reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching. The explicit Intel qos0 bandwidth comparison did not show a downstream payload-byte reduction versus V0; instead, the smart paths traded higher payload-byte totals for much lower frame counts. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
+Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while the adaptive V4 path reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching. The explicit Intel qos0 bandwidth comparison did not show a downstream payload-byte reduction versus V0; Section 7 therefore locks the fallback wording `{byte_claim_status.get('fallback_wording', BYTE_CLAIM_FALLBACK_WORDING)}`. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
 
 ## 1. Introduction
 
@@ -1334,11 +2830,17 @@ For these evidence runs, impairments are injected primarily on the gateway-to-da
 
 The paper standardizes on four latency summaries throughout the report assets: mean, p50, p95, and p99. p95 remains the headline comparison in the prose because it captures the high-end user-visible delay most directly, but the generated tables now carry the full set so the claims and metrics stay aligned with [experiments/analyze_run.py](../experiments/analyze_run.py).
 
+### 2.2 Stability metrics and phase handling
+
+The source-of-truth stability metric is the proxy-side inter-frame gap, defined as `diff(downstream_sent_ms)` over proxy `sent` events. The supporting stability signals are proxy frame-rate variability and the gateway's effective batch window, but the dashboard export itself is not treated as a frame clock because it is event-driven per rendered row. Phase-aware interpretation is scenario-driven: `clean` is analyzed as steady-state only; `bandwidth_200kbps`, `loss_2pct`, and `delay_50ms_jitter20ms` are treated as full-run impairment windows; and `outage_5s` preserves the explicit `steady-before-outage`, `outage`, and `recovery` phases from the scenario definition. The annotated outage cadence figure therefore remains the phase-aware visual for disruption and recovery, while the delay/jitter CDF acts as the compact whole-run jitter view for a full-run impairment case.
+
 ## 3. Results
 
 The clean qos0 run shows the expected tradeoff. V0 preserves the most immediate delivery path with a p95 display latency of {clean_v0['latency_p95_ms']} ms, whereas V4 increases p95 latency to {clean_v4['latency_p95_ms']} ms in exchange for frame consolidation. This is visible in the latency CDF and the message-rate plots in [report/assets/figures/intel_clean_qos0_latency_cdf.png](assets/figures/intel_clean_qos0_latency_cdf.png) and [report/assets/figures/intel_outage_qos1_message_rate_over_time.png](assets/figures/intel_outage_qos1_message_rate_over_time.png).
 
-The explicit Intel qos0 bandwidth comparison answers the first paper question directly. Compared with V0, V2 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}. V4 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. Peak per-second downstream payload rate also moved upward rather than downward: V2 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='max_bandwidth_delta_pct')}, while V4 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='max_bandwidth_delta_pct')}. In this evidence set, the smart paths reduce render cadence and frame count rather than downstream payload-byte volume. The paper-ready table for this claim is [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md).
+The explicit Intel qos0 bandwidth comparison answers the first paper question directly. Compared with V0, V2 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='downstream_bytes_delta_pct')}. V4 increased downstream payload bytes by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='downstream_bytes_delta_pct')}. Peak per-second downstream payload rate also moved upward rather than downward: V2 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v2', delta_field='max_bandwidth_delta_pct')}, while V4 increased by {_format_bandwidth_comparison_series(bandwidth_rows, variant='v4', delta_field='max_bandwidth_delta_pct')}. In this evidence set, the smart paths reduce render cadence and frame count rather than downstream payload-byte volume. Section 7 locks the byte-claim fallback wording `{byte_claim_status.get('fallback_wording', BYTE_CLAIM_FALLBACK_WORDING)}`. The paper-ready table for this claim is [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md).
+
+The new jitter summary table locks the proxy-side source of truth for stability and keeps the phase handling explicit. {_describe_delay_jitter_stability(intel_jitter_rows)} The compact artifacts for this phase are [report/assets/tables/intel_jitter_summary.md](assets/tables/intel_jitter_summary.md) and [report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png](assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png), while [report/assets/figures/main_outage_frame_rate.png](assets/figures/main_outage_frame_rate.png) remains the phase-annotated outage plot for steady-state, outage, and recovery.
 """
     if intel_batch_rows is not None:
         first_row = intel_batch_rows[0]
@@ -1352,7 +2854,14 @@ The Intel V1 versus V2 isolation sweep answers the third paper question directly
 """
     if intel_adaptive_rows is not None:
         report_text += f"""
-The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper question directly. Here, V2 is fixed-window batching and V3 is adaptive batching under the same base `250 ms` configuration. {_describe_adaptive_scenario(intel_adaptive_rows, 'bandwidth_200kbps')} {_describe_adaptive_scenario(intel_adaptive_rows, 'loss_2pct')} This is the right framing for the paper: the adaptive claim should be limited to the measured stale-fraction, cadence, and window-trace changes under these impairments, not generalized into a broader backlog or reliability claim. The paper-ready outputs for this task are [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md) and [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png).
+The Intel V2 versus V3 adaptive impairment sweep answers the fourth paper question directly. Here, V2 is fixed-window batching and V3 is adaptive batching under the same base `250 ms` configuration. {" ".join(_describe_adaptive_scenario(intel_adaptive_rows, scenario) for scenario in INTEL_ADAPTIVE_SCENARIOS)} This is the right framing for the paper: the adaptive claim should be limited to the measured stale-fraction, cadence, and window-trace changes under these impairments, not generalized into a broader backlog or reliability claim. The paper-ready outputs for this task are [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md) and [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png).
+"""
+    if intel_adaptive_parameter_rows is not None:
+        supporting_rows = [
+            row for row in intel_adaptive_parameter_rows if row["scenario_supports_positive_adaptive_claim"]
+        ]
+        report_text += f"""
+The bounded Section 7 V3-only parameter sweep compares each adaptive override set against the reused replicated V2 baseline from `{intel_sweep_dir.name}`-adjacent adaptive evidence. Across the tested grid, {len(supporting_rows)} scenario-level rows met the window-adjustment, stability-improvement, latency, and byte guardrails. Section 7 therefore locks the adaptive fallback wording `{adaptive_claim_status.get('fallback_wording', ADAPTIVE_CLAIM_FALLBACK_WORDING)}`. The paper-ready sweep summary is [report/assets/tables/intel_v3_adaptive_parameter_sweep.md](assets/tables/intel_v3_adaptive_parameter_sweep.md).
 """
     report_text += f"""
 The Intel qos0 outage freshness trace answers the fifth paper question directly. For this task, the paper-ready freshness signal is age-of-information over time rather than stale-fraction over time, because the current dashboard export records age only on rendered updates and does not sample idle stale transitions between renders. {_describe_outage_freshness(intel_outage_freshness_rows)} The end-state `staleCount` and `latestRowCount` values remain useful supporting context, but the primary evidence is the age trace in [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png) together with the compact summary table [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md).
@@ -1360,6 +2869,8 @@ The Intel qos0 outage freshness trace answers the fifth paper question directly.
 The Intel qos0 versus qos1 comparison answers the next paper-readiness question directly with a side-by-side table and figure. Across the Intel matrix (`v0`, `v2`, `v4` by `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s`), the measured exact duplicate-drop counter for qos1 stayed at {qos1_duplicates}. QoS1 versus QoS0 downstream bytes changed by {_format_qos_comparison_series(intel_qos_rows, variant='v0', delta_field='downstream_bytes_delta_pct')} for V0, {_format_qos_comparison_series(intel_qos_rows, variant='v2', delta_field='downstream_bytes_delta_pct')} for V2, and {_format_qos_comparison_series(intel_qos_rows, variant='v4', delta_field='downstream_bytes_delta_pct')} for V4. Latency p95 deltas are captured in the same table so the paper can make a bounded statement about observed setup-specific behavior rather than asserting broader reliability guarantees. The paper-ready outputs for this task are [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md) and [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png).
 
 The condensed summary table now provides a compact scan view across `v0`, `v2`, and `v4` on `clean`, `bandwidth_200kbps`, `loss_2pct`, and `outage_5s` under qos0, with latency mean, p50, p95, p99, downstream frames, downstream bytes, and stale fraction in one place. This is the paper-facing quick-read table at [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md).
+
+The proxy-side jitter summary table complements that condensed view by carrying the inter-frame-gap sample count, mean, p50, p95, p99, standard deviation, proxy frame-rate standard deviation, and effective batch window for the Intel primary matrix plus the targeted adaptive sweep. This keeps the Section 5 stability treatment tied to raw proxy timing without rewriting the frozen run roots.
 
 The explicit claim-guardrail review is captured in [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md). It blocks unbounded claims about latency, reliability, and network-loss reduction unless directly measured and defined in this setup, and it records safer bounded wording that matches the measured evidence.
 """
@@ -1382,7 +2893,7 @@ The demo evidence captures the qualitative effect directly. The final captured b
 
 ## 4. Discussion
 
-The final evidence supports a narrow conclusion. Agrasandhani's smart path is useful when the operator values stable rendering and last-known-good freshness cues more than minimum per-message latency. The data does not support a blanket claim that V4 minimizes downstream bytes, and the QoS1 experiments in this local broker configuration do not justify a strong empirical duplicate-rate claim beyond the measured counters. Those are acceptable limits for a six-page project report because the central contribution is the observable baseline-versus-smart tradeoff, not a universal broker benchmark.
+The final evidence supports a narrow conclusion. Agrasandhani's smart path is useful when the operator values stable rendering and last-known-good freshness cues more than minimum per-message latency. The data does not support a blanket claim that V4 minimizes downstream bytes, so the byte story remains `{byte_claim_status.get('fallback_wording', BYTE_CLAIM_FALLBACK_WORDING)}`. The adaptive story also remains `{adaptive_claim_status.get('fallback_wording', ADAPTIVE_CLAIM_FALLBACK_WORDING)}`. The QoS1 experiments in this local broker configuration do not justify a strong empirical duplicate-rate claim beyond the measured counters. Those are acceptable limits for a six-page project report because the central contribution is the observable baseline-versus-smart tradeoff, not a universal broker benchmark.
 
 ## 5. Reproducibility and Deliverables
 
@@ -1404,9 +2915,11 @@ def _write_deliverable_gate(
     intel_batch_sweep_dir: Path | None = None,
     intel_v1_v2_sweep_dir: Path | None = None,
     intel_adaptive_sweep_dir: Path | None = None,
+    intel_adaptive_parameter_sweep_dir: Path | None = None,
 ) -> None:
     freshness_summary_tables = ", [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv), [report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md](assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md), [report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png](assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png)"
     condensed_summary_tables = ", [report/assets/tables/intel_condensed_summary.csv](assets/tables/intel_condensed_summary.csv), [report/assets/tables/intel_condensed_summary.md](assets/tables/intel_condensed_summary.md)"
+    jitter_summary_tables = ", [report/assets/tables/intel_jitter_summary.csv](assets/tables/intel_jitter_summary.csv), [report/assets/tables/intel_jitter_summary.md](assets/tables/intel_jitter_summary.md), [report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png](assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png), [report/assets/figures/main_outage_frame_rate.png](assets/figures/main_outage_frame_rate.png)"
     guardrail_summary_tables = ", [report/assets/tables/intel_claim_guardrail_review.md](assets/tables/intel_claim_guardrail_review.md)"
     batch_sweep_line = ""
     batch_summary_tables = ""
@@ -1423,6 +2936,17 @@ def _write_deliverable_gate(
     if intel_adaptive_sweep_dir is not None:
         adaptive_sweep_line = f"- Intel V2 versus V3 adaptive sweep run id: `{intel_adaptive_sweep_dir.name}` at `{intel_adaptive_sweep_dir}`\n"
         adaptive_summary_tables = ", [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv](assets/tables/intel_v2_vs_v3_adaptive_impairment.csv), [report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md](assets/tables/intel_v2_vs_v3_adaptive_impairment.md), [report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png](assets/figures/intel_v2_vs_v3_adaptive_impairment.png)"
+    adaptive_parameter_sweep_line = ""
+    adaptive_parameter_summary_tables = ""
+    if intel_adaptive_parameter_sweep_dir is not None:
+        adaptive_parameter_sweep_line = (
+            f"- Intel V3 adaptive parameter sweep run id: `{intel_adaptive_parameter_sweep_dir.name}` at "
+            f"`{intel_adaptive_parameter_sweep_dir}`\n"
+        )
+        adaptive_parameter_summary_tables = (
+            ", [report/assets/tables/intel_v3_adaptive_parameter_sweep.csv](assets/tables/intel_v3_adaptive_parameter_sweep.csv), "
+            "[report/assets/tables/intel_v3_adaptive_parameter_sweep.md](assets/tables/intel_v3_adaptive_parameter_sweep.md)"
+        )
     content = f"""# Deliverable Completion Gate
 
 ## M1-M3 System Path
@@ -1436,8 +2960,8 @@ def _write_deliverable_gate(
 - Intel primary sweep run id: `{intel_sweep_dir.name}` at `{intel_sweep_dir}`
 - AoT validation run id: `{aot_sweep_dir.name}` at `{aot_sweep_dir}`
 - Demo capture run id: `{demo_dir.parent.name}` at `{demo_dir}`
-{batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
-- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}{condensed_summary_tables}{guardrail_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md)
+{batch_sweep_line}{isolation_sweep_line}{adaptive_sweep_line}{adaptive_parameter_sweep_line}- Final evidence manifest: [report/assets/evidence_manifest.json](assets/evidence_manifest.json)
+- Final summary tables: [report/assets/tables/intel_primary_run_summary.csv](assets/tables/intel_primary_run_summary.csv), [report/assets/tables/intel_bandwidth_vs_v0.csv](assets/tables/intel_bandwidth_vs_v0.csv), [report/assets/tables/intel_bandwidth_vs_v0.md](assets/tables/intel_bandwidth_vs_v0.md), [report/assets/tables/intel_qos_comparison.csv](assets/tables/intel_qos_comparison.csv), [report/assets/tables/intel_qos_comparison.md](assets/tables/intel_qos_comparison.md), [report/assets/figures/intel_qos_comparison.png](assets/figures/intel_qos_comparison.png){freshness_summary_tables}{batch_summary_tables}{isolation_summary_tables}{adaptive_summary_tables}{adaptive_parameter_summary_tables}{condensed_summary_tables}{jitter_summary_tables}{guardrail_summary_tables}, [report/assets/tables/aot_validation_summary.csv](assets/tables/aot_validation_summary.csv), [report/assets/tables/intel_key_claims.md](assets/tables/intel_key_claims.md), [report/assets/CLAIM_TO_EVIDENCE_MAP.md](assets/CLAIM_TO_EVIDENCE_MAP.md)
 - Final figures: [report/assets/figures](assets/figures)
 
 ## M5 Deliverables
@@ -1473,28 +2997,53 @@ def build_report_assets(
     intel_batch_sweep_dir: Path | None = None,
     intel_v1_v2_sweep_dir: Path | None = None,
     intel_adaptive_sweep_dir: Path | None = None,
+    intel_adaptive_parameter_sweep_dir: Path | None = None,
 ) -> dict[str, object]:
-    intel_rows = _load_summary_rows(intel_sweep_dir)
-    aot_rows = _load_summary_rows(aot_sweep_dir)
+    intel_trial_rows = load_summary_rows(intel_sweep_dir)
+    aot_trial_rows = load_summary_rows(aot_sweep_dir)
+    intel_rows = aggregate_summary_rows(intel_trial_rows)
+    aot_rows = aggregate_summary_rows(aot_trial_rows)
     bandwidth_rows = _build_intel_bandwidth_vs_v0_rows(intel_rows)
     intel_qos_rows = _build_intel_qos_comparison_rows(intel_rows)
     intel_condensed_rows = _build_intel_condensed_summary_rows(intel_rows)
     intel_main_summary_rows = _build_intel_main_summary_rows(intel_rows)
     intel_outage_freshness_rows = _build_intel_outage_freshness_rows(intel_rows)
     intel_batch_rows = (
-        _build_intel_batch_window_tradeoff_rows(_load_summary_rows(intel_batch_sweep_dir))
+        _build_intel_batch_window_tradeoff_rows(aggregate_summary_rows(load_summary_rows(intel_batch_sweep_dir)))
         if intel_batch_sweep_dir is not None
         else None
     )
     intel_v1_v2_rows = (
-        _build_intel_v1_v2_isolation_rows(_load_summary_rows(intel_v1_v2_sweep_dir))
+        _build_intel_v1_v2_isolation_rows(aggregate_summary_rows(load_summary_rows(intel_v1_v2_sweep_dir)))
         if intel_v1_v2_sweep_dir is not None
         else None
     )
-    intel_adaptive_rows = (
-        _build_intel_adaptive_rows(_load_summary_rows(intel_adaptive_sweep_dir))
-        if intel_adaptive_sweep_dir is not None
+    intel_adaptive_trial_rows = load_summary_rows(intel_adaptive_sweep_dir) if intel_adaptive_sweep_dir is not None else None
+    intel_adaptive_source_rows = (
+        aggregate_summary_rows(intel_adaptive_trial_rows)
+        if intel_adaptive_trial_rows is not None
         else None
+    )
+    intel_adaptive_rows = (
+        _build_intel_adaptive_rows(intel_adaptive_source_rows)
+        if intel_adaptive_source_rows is not None
+        else None
+    )
+    intel_adaptive_parameter_source_rows = (
+        aggregate_summary_rows(load_summary_rows(intel_adaptive_parameter_sweep_dir))
+        if intel_adaptive_parameter_sweep_dir is not None
+        else None
+    )
+    intel_adaptive_parameter_rows = (
+        _build_intel_v3_adaptive_parameter_sweep_rows(intel_adaptive_source_rows, intel_adaptive_parameter_source_rows)
+        if intel_adaptive_source_rows is not None and intel_adaptive_parameter_source_rows is not None
+        else None
+    )
+    intel_jitter_rows = _build_intel_jitter_summary_rows(
+        intel_rows,
+        intel_sweep_dir=intel_sweep_dir,
+        adaptive_rows=intel_adaptive_source_rows,
+        adaptive_sweep_dir=intel_adaptive_sweep_dir,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1503,16 +3052,17 @@ def build_report_assets(
     figures_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_csv(tables_dir / "intel_primary_run_summary.csv", intel_rows)
-    _write_csv(tables_dir / "aot_validation_summary.csv", aot_rows)
+    _write_csv(tables_dir / "intel_primary_run_summary.csv", intel_trial_rows)
+    _write_csv(tables_dir / "aot_validation_summary.csv", aot_trial_rows)
     _write_csv(tables_dir / "intel_bandwidth_vs_v0.csv", bandwidth_rows)
     _write_csv(tables_dir / "intel_qos_comparison.csv", intel_qos_rows)
     _write_csv(tables_dir / "intel_condensed_summary.csv", intel_condensed_rows)
     _write_csv(tables_dir / "intel_main_summary_table.csv", intel_main_summary_rows)
     _write_csv(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv", intel_outage_freshness_rows)
+    _write_csv(tables_dir / "intel_jitter_summary.csv", intel_jitter_rows)
     _write_markdown_table(
         tables_dir / "intel_primary_run_summary.md",
-        intel_rows,
+        intel_trial_rows,
         columns=[
             "run_id",
             "variant",
@@ -1543,27 +3093,62 @@ def build_report_assets(
         ],
     )
     _write_markdown_table(
+        tables_dir / "intel_jitter_summary.md",
+        intel_jitter_rows,
+        columns=[
+            "source_sweep",
+            "comparison_family",
+            "variant",
+            "scenario",
+            "mqtt_qos",
+            "proxy_inter_frame_gap_sample_count",
+            "proxy_inter_frame_gap_mean_ms",
+            "proxy_inter_frame_gap_p50_ms",
+            "proxy_inter_frame_gap_p95_ms",
+            "proxy_inter_frame_gap_p99_ms",
+            "proxy_inter_frame_gap_stddev_ms",
+            "proxy_frame_rate_stddev_per_s",
+            "effective_batch_window_ms",
+            "max_frame_rate_per_s",
+            "run_dir",
+        ],
+    )
+    _write_markdown_table(
         tables_dir / "intel_bandwidth_vs_v0.md",
         bandwidth_rows,
         columns=[
             "scenario",
             "variant",
+            "baseline_n",
+            "variant_n",
             "baseline_downstream_bytes_out",
+            "baseline_downstream_bytes_out_stddev",
             "variant_downstream_bytes_out",
+            "variant_downstream_bytes_out_stddev",
             "downstream_bytes_delta_pct",
+            "shared_impairment_seeds",
+            "trial_byte_delta_pcts",
+            "trial_direction_consistent",
+            "scenario_byte_claim_classification",
             "baseline_max_bandwidth_bytes_per_s",
+            "baseline_max_bandwidth_bytes_per_s_stddev",
             "variant_max_bandwidth_bytes_per_s",
+            "variant_max_bandwidth_bytes_per_s_stddev",
             "max_bandwidth_delta_pct",
             "baseline_downstream_frames_out",
+            "baseline_downstream_frames_out_stddev",
             "variant_downstream_frames_out",
+            "variant_downstream_frames_out_stddev",
             "downstream_frames_delta_pct",
             "baseline_latency_mean_ms",
             "baseline_latency_p50_ms",
             "baseline_latency_p95_ms",
+            "baseline_latency_p95_ms_stddev",
             "baseline_latency_p99_ms",
             "variant_latency_mean_ms",
             "variant_latency_p50_ms",
             "variant_latency_p95_ms",
+            "variant_latency_p95_ms_stddev",
             "variant_latency_p99_ms",
         ],
     )
@@ -1690,6 +3275,8 @@ def build_report_assets(
             intel_adaptive_rows,
             columns=[
                 "scenario",
+                "v2_n",
+                "v3_n",
                 "v2_latency_mean_ms",
                 "v2_latency_p50_ms",
                 "v2_latency_p95_ms",
@@ -1715,11 +3302,61 @@ def build_report_assets(
                 "v2_max_effective_batch_window_ms",
                 "v3_min_effective_batch_window_ms",
                 "v3_max_effective_batch_window_ms",
+                "v2_proxy_inter_frame_gap_stddev_ms",
+                "v3_proxy_inter_frame_gap_stddev_ms",
+                "inter_frame_gap_stddev_delta_ms",
+                "v2_proxy_frame_rate_stddev_per_s",
+                "v3_proxy_frame_rate_stddev_per_s",
+                "frame_rate_stddev_delta_per_s",
                 "v3_adaptive_window_increase_events",
                 "v3_adaptive_window_decrease_events",
-                "v3_last_adaptation_reason",
+                "stability_improvement_metrics",
+                "v3_last_adaptation_reasons",
+                "window_adjusted",
+                "stability_improved",
+                "latency_guardrail_ok",
+                "byte_guardrail_ok",
+                "scenario_supports_positive_adaptive_claim",
                 "v2_run_dir",
                 "v3_run_dir",
+            ],
+        )
+    if intel_adaptive_parameter_rows is not None:
+        _write_csv(tables_dir / "intel_v3_adaptive_parameter_sweep.csv", intel_adaptive_parameter_rows)
+        _write_markdown_table(
+            tables_dir / "intel_v3_adaptive_parameter_sweep.md",
+            intel_adaptive_parameter_rows,
+            columns=[
+                "config_id",
+                "scenario",
+                "adaptive_send_slow_ms",
+                "adaptive_step_up_ms",
+                "adaptive_max_batch_window_ms",
+                "baseline_v2_n",
+                "v3_n",
+                "baseline_v2_latency_p95_ms",
+                "v3_latency_p95_ms",
+                "latency_p95_delta_pct",
+                "baseline_v2_proxy_downstream_bytes_out",
+                "v3_proxy_downstream_bytes_out",
+                "downstream_bytes_delta_pct",
+                "baseline_v2_proxy_inter_frame_gap_stddev_ms",
+                "v3_proxy_inter_frame_gap_stddev_ms",
+                "inter_frame_gap_stddev_delta_ms",
+                "baseline_v2_proxy_frame_rate_stddev_per_s",
+                "v3_proxy_frame_rate_stddev_per_s",
+                "frame_rate_stddev_delta_per_s",
+                "v3_min_effective_batch_window_ms",
+                "v3_max_effective_batch_window_ms",
+                "v3_adaptive_window_increase_events",
+                "v3_adaptive_window_decrease_events",
+                "stability_improvement_metrics",
+                "v3_last_adaptation_reasons",
+                "window_adjusted",
+                "stability_improved",
+                "latency_guardrail_ok",
+                "byte_guardrail_ok",
+                "scenario_supports_positive_adaptive_claim",
             ],
         )
     (tables_dir / "intel_key_claims.md").write_text(
@@ -1732,6 +3369,7 @@ def build_report_assets(
             intel_batch_rows,
             intel_v1_v2_rows,
             intel_adaptive_rows,
+            intel_adaptive_parameter_rows,
         ),
         encoding="utf-8",
     )
@@ -1740,6 +3378,8 @@ def build_report_assets(
             intel_rows,
             intel_qos_rows,
             intel_outage_freshness_rows,
+            intel_adaptive_rows,
+            intel_adaptive_parameter_rows,
         ),
         encoding="utf-8",
     )
@@ -1749,6 +3389,12 @@ def build_report_assets(
         scenario="clean",
         mqtt_qos=0,
         output_path=figures_dir / "intel_clean_qos0_latency_cdf.png",
+    )
+    _plot_inter_frame_gap_cdf(
+        intel_rows,
+        scenario="delay_50ms_jitter20ms",
+        mqtt_qos=0,
+        output_path=figures_dir / "intel_delay_qos0_inter_frame_gap_cdf.png",
     )
     _plot_timeseries(
         intel_rows,
@@ -1796,68 +3442,67 @@ def build_report_assets(
             output_path=figures_dir / "intel_v2_vs_v3_adaptive_impairment.png",
         )
     _copy_demo_artifacts(demo_dir, figures_dir)
+    old_evidence_inventory = _build_old_evidence_inventory(
+        intel_sweep_dir=intel_sweep_dir,
+        aot_sweep_dir=aot_sweep_dir,
+        demo_dir=demo_dir,
+        intel_batch_sweep_dir=intel_batch_sweep_dir,
+        intel_v1_v2_sweep_dir=intel_v1_v2_sweep_dir,
+        intel_adaptive_sweep_dir=intel_adaptive_sweep_dir,
+        intel_adaptive_parameter_sweep_dir=intel_adaptive_parameter_sweep_dir,
+        intel_rows=intel_rows,
+        aot_rows=aot_rows,
+        intel_batch_rows=intel_batch_rows,
+        intel_v1_v2_rows=intel_v1_v2_rows,
+        intel_adaptive_rows=intel_adaptive_rows,
+        intel_adaptive_parameter_rows=intel_adaptive_parameter_rows,
+    )
+    old_evidence_inventory["compatibility_mirror_of"] = _canonical_report_asset_path("evidence_manifest.json")
+    (output_dir / "old_evidence_inventory.json").write_text(
+        json.dumps(old_evidence_inventory, indent=2),
+        encoding="utf-8",
+    )
+    (output_dir / "CLAIM_TO_EVIDENCE_MAP.md").write_text(
+        _build_claim_to_evidence_map(
+            intel_sweep_dir=intel_sweep_dir,
+            batch_sweep_dir=intel_batch_sweep_dir,
+            isolation_sweep_dir=intel_v1_v2_sweep_dir,
+            adaptive_sweep_dir=intel_adaptive_sweep_dir,
+            adaptive_parameter_sweep_dir=intel_adaptive_parameter_sweep_dir,
+        ),
+        encoding="utf-8",
+    )
 
     manifest = {
+        "schema_version": 2,
         "intel_sweep_dir": str(intel_sweep_dir),
         "aot_sweep_dir": str(aot_sweep_dir),
         "demo_dir": str(demo_dir),
         "intel_batch_sweep_dir": str(intel_batch_sweep_dir) if intel_batch_sweep_dir is not None else None,
         "intel_v1_v2_sweep_dir": str(intel_v1_v2_sweep_dir) if intel_v1_v2_sweep_dir is not None else None,
         "intel_adaptive_sweep_dir": str(intel_adaptive_sweep_dir) if intel_adaptive_sweep_dir is not None else None,
-        "intel_runs": [row["run_id"] for row in intel_rows],
-        "aot_runs": [row["run_id"] for row in aot_rows],
+        "intel_adaptive_parameter_sweep_dir": (
+            str(intel_adaptive_parameter_sweep_dir)
+            if intel_adaptive_parameter_sweep_dir is not None
+            else None
+        ),
+        "intel_runs": [row["run_id"] for row in intel_trial_rows],
+        "aot_runs": [row["run_id"] for row in aot_trial_rows],
+        "run_registry_path": _canonical_logs_path("run_registry.json"),
+        "old_evidence_inventory_path": _canonical_report_asset_path("old_evidence_inventory.json"),
+        "claim_map_path": _canonical_report_asset_path("CLAIM_TO_EVIDENCE_MAP.md"),
+        "asset_provenance": old_evidence_inventory["entries"],
         "generated_figures": [
-            str(figures_dir / "intel_clean_qos0_latency_cdf.png"),
-            str(figures_dir / "intel_outage_qos1_bandwidth_over_time.png"),
-            str(figures_dir / "intel_outage_qos1_message_rate_over_time.png"),
-            str(figures_dir / "intel_outage_qos0_v0_vs_v4_age_over_time.png"),
-            str(figures_dir / "main_outage_frame_rate.png"),
-            str(figures_dir / "intel_qos_comparison.png"),
-            str(figures_dir / "final_demo_compare.png"),
-            str(figures_dir / "final_demo_baseline_dashboard.png"),
-            str(figures_dir / "final_demo_smart_dashboard.png"),
+            str(Path(entry["asset_path"]))
+            for entry in old_evidence_inventory["entries"]
+            if entry["asset_path"].startswith("report/assets/figures/")
         ],
         "generated_tables": [
-            str(tables_dir / "intel_primary_run_summary.csv"),
-            str(tables_dir / "intel_bandwidth_vs_v0.csv"),
-            str(tables_dir / "intel_bandwidth_vs_v0.md"),
-            str(tables_dir / "intel_qos_comparison.csv"),
-            str(tables_dir / "intel_qos_comparison.md"),
-            str(tables_dir / "intel_condensed_summary.csv"),
-            str(tables_dir / "intel_condensed_summary.md"),
-            str(tables_dir / "intel_main_summary_table.csv"),
-            str(tables_dir / "intel_main_summary_table.md"),
-            str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.csv"),
-            str(tables_dir / "intel_outage_qos0_v0_vs_v4_freshness.md"),
-            str(tables_dir / "aot_validation_summary.csv"),
-            str(tables_dir / "intel_key_claims.md"),
-            str(tables_dir / "intel_claim_guardrail_review.md"),
+            str(Path(entry["asset_path"]))
+            for entry in old_evidence_inventory["entries"]
+            if entry["asset_path"].startswith("report/assets/tables/")
         ],
     }
-    if intel_batch_rows is not None:
-        manifest["generated_figures"].append(str(figures_dir / "intel_v2_batch_window_tradeoff.png"))
-        manifest["generated_tables"].extend(
-            [
-                str(tables_dir / "intel_v2_batch_window_tradeoff.csv"),
-                str(tables_dir / "intel_v2_batch_window_tradeoff.md"),
-            ]
-        )
-    if intel_v1_v2_rows is not None:
-        manifest["generated_figures"].append(str(figures_dir / "intel_v1_vs_v2_isolation.png"))
-        manifest["generated_tables"].extend(
-            [
-                str(tables_dir / "intel_v1_vs_v2_isolation.csv"),
-                str(tables_dir / "intel_v1_vs_v2_isolation.md"),
-            ]
-        )
-    if intel_adaptive_rows is not None:
-        manifest["generated_figures"].append(str(figures_dir / "intel_v2_vs_v3_adaptive_impairment.png"))
-        manifest["generated_tables"].extend(
-            [
-                str(tables_dir / "intel_v2_vs_v3_adaptive_impairment.csv"),
-                str(tables_dir / "intel_v2_vs_v3_adaptive_impairment.md"),
-            ]
-        )
     (output_dir / "evidence_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1869,9 +3514,11 @@ def build_report_assets(
         aot_rows=aot_rows,
         intel_outage_freshness_rows=intel_outage_freshness_rows,
         intel_qos_rows=intel_qos_rows,
+        intel_jitter_rows=intel_jitter_rows,
         intel_batch_rows=intel_batch_rows,
         intel_v1_v2_rows=intel_v1_v2_rows,
         intel_adaptive_rows=intel_adaptive_rows,
+        intel_adaptive_parameter_rows=intel_adaptive_parameter_rows,
     )
     _write_deliverable_gate(
         intel_sweep_dir=intel_sweep_dir,
@@ -1881,6 +3528,7 @@ def build_report_assets(
         intel_batch_sweep_dir=intel_batch_sweep_dir,
         intel_v1_v2_sweep_dir=intel_v1_v2_sweep_dir,
         intel_adaptive_sweep_dir=intel_adaptive_sweep_dir,
+        intel_adaptive_parameter_sweep_dir=intel_adaptive_parameter_sweep_dir,
     )
     return manifest
 
@@ -1893,6 +3541,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--intel-batch-sweep-dir", type=Path)
     parser.add_argument("--intel-v1-v2-sweep-dir", type=Path)
     parser.add_argument("--intel-adaptive-sweep-dir", type=Path)
+    parser.add_argument("--intel-adaptive-parameter-sweep-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
@@ -1907,6 +3556,7 @@ def main() -> None:
         intel_batch_sweep_dir=args.intel_batch_sweep_dir,
         intel_v1_v2_sweep_dir=args.intel_v1_v2_sweep_dir,
         intel_adaptive_sweep_dir=args.intel_adaptive_sweep_dir,
+        intel_adaptive_parameter_sweep_dir=args.intel_adaptive_parameter_sweep_dir,
     )
     print(json.dumps(manifest, indent=2))
 

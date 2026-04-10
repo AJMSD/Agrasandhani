@@ -78,10 +78,24 @@ async function verifyBrowserAvailable() {
   }
 }
 
-try {
-  await verifyBrowserAvailable();
+async function launchChromium() {
+  const chromium = await loadPlaywright();
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message.includes("Executable doesn't exist")) {
+      throw new Error(
+        "Playwright Chromium browser is not installed. Run `npx playwright install chromium`.",
+      );
+    }
+    throw error;
+  }
+}
 
+try {
   if (checkOnly) {
+    await verifyBrowserAvailable();
     console.log("Playwright and Chromium are available.");
     process.exit(0);
   }
@@ -93,38 +107,33 @@ try {
     await fs.mkdir(path.dirname(screenshotPath), { recursive: true });
   }
 
-  const chromium = await loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium();
   const page = await browser.newPage();
+  await page.goto(url, { waitUntil: "commit", timeout: 30000 });
+  const resolvedScreenshotPath = screenshotPath || path.join(outputDir, "dashboard.png");
 
-  try {
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    const resolvedScreenshotPath = screenshotPath || path.join(outputDir, "dashboard.png");
+  if (screenshotOnly) {
+    await page.waitForTimeout(captureMs);
+    await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
+  } else {
+    await page.waitForFunction(() => window.agrasandhaniMeasurements !== undefined, null, { timeout: 10000 });
+    await page.waitForFunction(() => {
+      const status = document.getElementById("connection-status");
+      return status && !status.textContent.includes("Connecting");
+    }, null, { timeout: 15000 });
+    await page.waitForTimeout(captureMs);
 
-    if (screenshotOnly) {
-      await page.waitForTimeout(captureMs);
-      await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
-    } else {
-      await page.waitForFunction(() => window.agrasandhaniMeasurements !== undefined, null, { timeout: 10000 });
-      await page.waitForFunction(() => {
-        const status = document.getElementById("connection-status");
-        return status && !status.textContent.includes("Connecting");
-      }, null, { timeout: 15000 });
-      await page.waitForTimeout(captureMs);
+    const payload = await page.evaluate(() => ({
+      csv: window.agrasandhaniMeasurements.exportCsv(),
+      summary: window.agrasandhaniMeasurements.summary,
+      thresholdMs: window.agrasandhaniMeasurements.thresholdMs,
+    }));
 
-      const payload = await page.evaluate(() => ({
-        csv: window.agrasandhaniMeasurements.exportCsv(),
-        summary: window.agrasandhaniMeasurements.summary,
-        thresholdMs: window.agrasandhaniMeasurements.thresholdMs,
-      }));
-
-      await fs.writeFile(path.join(outputDir, "dashboard_measurements.csv"), payload.csv, "utf-8");
-      await fs.writeFile(path.join(outputDir, "dashboard_summary.json"), JSON.stringify(payload, null, 2), "utf-8");
-      await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
-    }
-  } finally {
-    await browser.close();
+    await fs.writeFile(path.join(outputDir, "dashboard_measurements.csv"), payload.csv, "utf-8");
+    await fs.writeFile(path.join(outputDir, "dashboard_summary.json"), JSON.stringify(payload, null, 2), "utf-8");
+    await page.screenshot({ path: resolvedScreenshotPath, fullPage: true });
   }
+  process.exit(0);
 } catch (error) {
   console.error(String(error?.message || error));
   process.exit(1);

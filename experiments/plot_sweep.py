@@ -6,18 +6,16 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-
-def _load_summary_rows(sweep_dir: Path) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for summary_path in sweep_dir.glob("*/summary.csv"):
-        with summary_path.open("r", encoding="utf-8", newline="") as handle:
-            rows.extend(csv.DictReader(handle))
-    return rows
+from experiments.sweep_aggregation import aggregate_summary_rows, load_summary_rows
 
 
 def _load_latency_samples(run_dir: Path) -> list[float]:
@@ -40,18 +38,18 @@ def _load_timeseries(run_dir: Path) -> list[dict[str, float]]:
 
 
 def plot_sweep(sweep_dir: Path) -> None:
-    summary_rows = _load_summary_rows(sweep_dir)
-    if not summary_rows:
+    trial_rows = load_summary_rows(sweep_dir)
+    if not trial_rows:
         raise SystemExit(f"No per-run summaries found under {sweep_dir}")
+    summary_rows = aggregate_summary_rows(trial_rows)
 
     output_dir = sweep_dir / "plots"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grouped_runs: dict[str, list[Path]] = defaultdict(list)
-    for summary_path in sweep_dir.glob("*/summary.json"):
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    for payload in trial_rows:
         label = f"{payload['variant']} | {payload['scenario']} | qos{payload['mqtt_qos']}"
-        grouped_runs[label].append(summary_path.parent)
+        grouped_runs[label].append(Path(str(payload["run_dir"])))
 
     figure = plt.figure(figsize=(10, 6))
     for label, run_dirs in sorted(grouped_runs.items()):
@@ -95,7 +93,7 @@ def plot_sweep(sweep_dir: Path) -> None:
 
     figure = plt.figure(figsize=(10, 6))
     labels = [f"{row['variant']} | {row['scenario']} | qos{row['mqtt_qos']}" for row in summary_rows]
-    stale_values = [float(row["stale_fraction"]) for row in summary_rows]
+    stale_values = [float(row.get("stale_fraction", 0.0) or 0.0) for row in summary_rows]
     plt.barh(labels, stale_values)
     plt.xlabel("Stale fraction")
     plt.title("Stale fraction by run")

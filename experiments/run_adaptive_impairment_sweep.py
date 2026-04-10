@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,10 +13,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from experiments.run_v1_v2_isolation_sweep import parse_csv_list
-from experiments.run_sweep import LOGS_ROOT, SweepConfig, _port_open, ensure_browser_capture_prerequisites, run_once
+from experiments.run_sweep import DEFAULT_IMPAIRMENT_SEED, LOGS_ROOT, SweepConfig, _port_open, ensure_browser_capture_prerequisites, parse_seed_list, run_once
+from experiments.sweep_aggregation import write_condition_aggregates
 
 DEFAULT_VARIANTS = ["v2", "v3"]
-DEFAULT_SCENARIOS = ["bandwidth_200kbps", "loss_2pct"]
+DEFAULT_SCENARIOS = ["bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"]
 
 
 @dataclass(slots=True)
@@ -43,6 +44,8 @@ class AdaptiveImpairmentSweepConfig:
     adaptive_queue_low_watermark: int | None = None
     adaptive_send_slow_ms: int | None = None
     adaptive_recovery_streak: int | None = None
+    trial_seeds: list[int] | None = None
+    default_impairment_seed: int = DEFAULT_IMPAIRMENT_SEED
 
 
 def _adaptive_gateway_overrides(config: AdaptiveImpairmentSweepConfig) -> dict[str, str]:
@@ -60,6 +63,16 @@ def _adaptive_gateway_overrides(config: AdaptiveImpairmentSweepConfig) -> dict[s
         if value is not None:
             overrides[env_name] = str(value)
     return overrides
+
+
+def _adaptive_condition_suffix(config: AdaptiveImpairmentSweepConfig) -> str | None:
+    overrides = _adaptive_gateway_overrides(config)
+    if not overrides:
+        return None
+    digest = hashlib.sha1(
+        json.dumps(overrides, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:8]
+    return f"cfg{digest}"
 
 
 def build_sweep_config(
@@ -97,7 +110,17 @@ def _write_summary_csv(path: Path, rows: list[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["scenario", "variant", "batch_window_ms", "run_id", "run_dir"],
+            fieldnames=[
+                "scenario",
+                "variant",
+                "batch_window_ms",
+                "condition_id",
+                "trial_id",
+                "trial_index",
+                "impairment_seed",
+                "run_id",
+                "run_dir",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -116,30 +139,45 @@ def run_adaptive_impairment_sweep(config: AdaptiveImpairmentSweepConfig) -> Path
 
     sweep_dir = LOGS_ROOT / config.sweep_id
     if sweep_dir.exists():
-        shutil.rmtree(sweep_dir)
+        raise SystemExit(f"Sweep output root already exists and will not be overwritten: {sweep_dir}")
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
     completed_runs: list[dict[str, object]] = []
+    trial_seeds = config.trial_seeds or [config.default_impairment_seed]
+    use_trial_layout = len(trial_seeds) > 1
+    condition_suffix = _adaptive_condition_suffix(config)
     for scenario in config.scenarios:
         for variant in DEFAULT_VARIANTS:
-            run_config = build_sweep_config(config, variant=variant, scenario=scenario)
-            run_dir = run_once(
-                run_config,
-                variant=variant,
-                mqtt_qos=0,
-                scenario_name=scenario,
-            )
-            completed_runs.append(
-                {
-                    "scenario": scenario,
-                    "variant": variant,
-                    "batch_window_ms": config.batch_window_ms,
-                    "run_dir": str(run_dir),
-                    "run_id": run_dir.name,
-                }
-            )
+            for trial_index, impairment_seed in enumerate(trial_seeds, start=1):
+                run_config = build_sweep_config(config, variant=variant, scenario=scenario)
+                run_once_kwargs: dict[str, object] = {}
+                if use_trial_layout:
+                    run_once_kwargs["trial_index"] = trial_index
+                    run_once_kwargs["impairment_seed"] = impairment_seed
+                run_dir = run_once(
+                    run_config,
+                    variant=variant,
+                    mqtt_qos=0,
+                    scenario_name=scenario,
+                    run_label_suffix=condition_suffix,
+                    **run_once_kwargs,
+                )
+                completed_runs.append(
+                    {
+                        "scenario": scenario,
+                        "variant": variant,
+                        "batch_window_ms": config.batch_window_ms,
+                        "run_dir": str(run_dir),
+                        "run_id": f"{run_dir.parent.name}-{run_dir.name}" if use_trial_layout else run_dir.name,
+                        "condition_id": run_dir.parent.name if use_trial_layout else run_dir.name,
+                        "trial_id": run_dir.name if use_trial_layout else None,
+                        "trial_index": trial_index if use_trial_layout else None,
+                        "impairment_seed": impairment_seed,
+                    }
+                )
 
     manifest = {
+        "schema_version": 2,
         "sweep_id": config.sweep_id,
         "data_file": str(config.data_file),
         "variants": DEFAULT_VARIANTS,
@@ -151,10 +189,12 @@ def run_adaptive_impairment_sweep(config: AdaptiveImpairmentSweepConfig) -> Path
         "sensor_limit": config.sensor_limit,
         "burst_enabled": True,
         "adaptive_overrides": _adaptive_gateway_overrides(config),
+        "trial_seeds": trial_seeds,
         "runs": completed_runs,
     }
     (sweep_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     _write_summary_csv(sweep_dir / "summary.csv", completed_runs)
+    write_condition_aggregates(sweep_dir)
     return sweep_dir
 
 
@@ -181,6 +221,8 @@ def parse_args(argv: list[str] | None = None) -> AdaptiveImpairmentSweepConfig:
     parser.add_argument("--adaptive-queue-low-watermark", type=int)
     parser.add_argument("--adaptive-send-slow-ms", type=int)
     parser.add_argument("--adaptive-recovery-streak", type=int)
+    parser.add_argument("--impairment-seed", type=int, default=DEFAULT_IMPAIRMENT_SEED)
+    parser.add_argument("--trial-seeds", type=parse_seed_list)
     parser.add_argument("--skip-browser", action="store_true")
     args = parser.parse_args(argv)
     return AdaptiveImpairmentSweepConfig(
@@ -206,6 +248,8 @@ def parse_args(argv: list[str] | None = None) -> AdaptiveImpairmentSweepConfig:
         adaptive_queue_low_watermark=args.adaptive_queue_low_watermark,
         adaptive_send_slow_ms=args.adaptive_send_slow_ms,
         adaptive_recovery_streak=args.adaptive_recovery_streak,
+        trial_seeds=args.trial_seeds,
+        default_impairment_seed=args.impairment_seed,
     )
 
 

@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{AoT portability-check summary (QoS~0, means across two replicated trials).}
+\label{tab:aot-summary}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lccr@{}}
+\toprule
+Scenario & Variant & Frames & \makecell[r]{Latency p95\\(ms)} \\
+\midrule
+clean & V0 & 439 & 77.5 \\
+clean & V4 & 18 & 276.1 \\
+\nolinkurl{outage_5s} & V0 & 424 & 74.7 \\
+\nolinkurl{outage_5s} & V4 & 16 & 273.2 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}

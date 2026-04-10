@@ -15,7 +15,7 @@ class RunAdaptiveImpairmentSweepTests(unittest.TestCase):
         config = run_adaptive_impairment_sweep.parse_args(["--data-file", "intel.csv"])
 
         self.assertEqual(config.data_file, Path("intel.csv"))
-        self.assertEqual(config.scenarios, ["bandwidth_200kbps", "loss_2pct"])
+        self.assertEqual(config.scenarios, ["bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"])
         self.assertEqual(config.batch_window_ms, 250)
         self.assertEqual(config.duration_s, 30)
         self.assertEqual(config.replay_speed, 5.0)

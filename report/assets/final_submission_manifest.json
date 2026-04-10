@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-04-10T03:48:46.966357+00:00",
+  "status": "passed",
+  "included_submission_files": [
+    "simulator/preprocess_common.py",
+    "simulator/preprocess_intel_lab.py",
+    "simulator/preprocess_aot.py",
+    "simulator/replay_publisher.py",
+    "simulator/replay_timing.py",
+    "gateway/app.py",
+    "gateway/forwarder.py",
+    "gateway/mqtt_ingest.py",
+    "gateway/schemas.py",
+    "ui/index.html",
+    "ui/demo_compare.html",
+    "experiments/analyze_run.py",
+    "experiments/impairment_proxy.py",
+    "experiments/run_sweep.py",
+    "experiments/run_demo.py",
+    "experiments/run_final_deliverables.py",
+    "experiments/build_report_assets.py",
+    "experiments/build_run_registry.py",
+    "experiments/package_paper_assets.py",
+    "experiments/sweep_aggregation.py",
+    "experiments/run_replicated_phase6.py",
+    "experiments/run_batch_window_sweep.py",
+    "experiments/run_v1_v2_isolation_sweep.py",
+    "experiments/run_adaptive_impairment_sweep.py",
+    "experiments/run_v3_adaptive_parameter_sweep.py",
+    "experiments/reproduce_all.sh",
+    "experiments/freeze_final_submission.py",
+    "README_reproducibility.md",
+    "report/final_report.md",
+    "report/reproducibility.md",
+    "report/experiment_pipeline_audit.md",
+    "report/metric_definitions.md",
+    "report/deliverable_gate.md",
+    "experiments/logs/run_registry.json",
+    "report/assets/evidence_manifest.json",
+    "report/assets/old_evidence_inventory.json",
+    "report/assets/CLAIM_TO_EVIDENCE_MAP.md",
+    "report/assets/final_submission_manifest.json",
+    "report/assets/figures/intel_clean_qos0_latency_cdf.png",
+    "report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png",
+    "report/assets/figures/intel_outage_qos1_bandwidth_over_time.png",
+    "report/assets/figures/intel_outage_qos1_message_rate_over_time.png",
+    "report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png",
+    "report/assets/figures/main_outage_frame_rate.png",
+    "report/assets/figures/intel_qos_comparison.png",
+    "report/assets/figures/final_demo_compare.png",
+    "report/assets/figures/final_demo_baseline_dashboard.png",
+    "report/assets/figures/final_demo_smart_dashboard.png",
+    "report/assets/figures/intel_v2_batch_window_tradeoff.png",
+    "report/assets/figures/intel_v1_vs_v2_isolation.png",
+    "report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png",
+    "report/assets/tables/intel_primary_run_summary.csv",
+    "report/assets/tables/intel_primary_run_summary.md",
+    "report/assets/tables/intel_bandwidth_vs_v0.csv",
+    "report/assets/tables/intel_bandwidth_vs_v0.md",
+    "report/assets/tables/intel_qos_comparison.csv",
+    "report/assets/tables/intel_qos_comparison.md",
+    "report/assets/tables/intel_condensed_summary.csv",
+    "report/assets/tables/intel_condensed_summary.md",
+    "report/assets/tables/intel_main_summary_table.csv",
+    "report/assets/tables/intel_main_summary_table.md",
+    "report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv",
+    "report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md",
+    "report/assets/tables/intel_jitter_summary.csv",
+    "report/assets/tables/intel_jitter_summary.md",
+    "report/assets/tables/aot_validation_summary.csv",
+    "report/assets/tables/intel_key_claims.md",
+    "report/assets/tables/intel_claim_guardrail_review.md",
+    "report/assets/tables/intel_v2_batch_window_tradeoff.csv",
+    "report/assets/tables/intel_v2_batch_window_tradeoff.md",
+    "report/assets/tables/intel_v1_vs_v2_isolation.csv",
+    "report/assets/tables/intel_v1_vs_v2_isolation.md",
+    "report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv",
+    "report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md",
+    "report/assets/tables/intel_v3_adaptive_parameter_sweep.csv",
+    "report/assets/tables/intel_v3_adaptive_parameter_sweep.md",
+    "research_paper/main.tex",
+    "research_paper/references.bib",
+    "research_paper/Sections/actionplan.tex",
+    "research_paper/Sections/approach.tex",
+    "research_paper/Sections/evaluation.tex",
+    "research_paper/Sections/introduction.tex",
+    "research_paper/Sections/related-work.tex",
+    "research_paper/Sections/TeamInfo.tex",
+    "research_paper/Sections/approach-cs537.png",
+    "research_paper/tables/paper_assets_manifest.json",
+    "research_paper/tables/paper_asset_index.md",
+    "research_paper/tables/intel_main_summary_table.tex",
+    "research_paper/figures/intel_clean_qos0_latency_cdf.png",
+    "research_paper/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png",
+    "research_paper/figures/main_outage_frame_rate.png",
+    "research_paper/tables/intel_main_summary_table.csv",
+    "research_paper/figures/final_demo_compare.png",
+    "research_paper/figures/intel_delay_qos0_inter_frame_gap_cdf.png",
+    "research_paper/figures/intel_outage_qos1_bandwidth_over_time.png",
+    "research_paper/figures/intel_outage_qos1_message_rate_over_time.png",
+    "research_paper/figures/intel_qos_comparison.png",
+    "research_paper/figures/intel_v1_vs_v2_isolation.png",
+    "research_paper/figures/intel_v2_batch_window_tradeoff.png",
+    "research_paper/figures/intel_v2_vs_v3_adaptive_impairment.png",
+    "research_paper/tables/intel_bandwidth_vs_v0.csv",
+    "research_paper/tables/intel_bandwidth_vs_v0.md",
+    "research_paper/tables/intel_claim_guardrail_review.md",
+    "research_paper/tables/intel_jitter_summary.csv",
+    "research_paper/tables/intel_jitter_summary.md",
+    "research_paper/tables/intel_outage_qos0_v0_vs_v4_freshness.csv",
+    "research_paper/tables/intel_outage_qos0_v0_vs_v4_freshness.md",
+    "research_paper/tables/intel_qos_comparison.csv",
+    "research_paper/tables/intel_qos_comparison.md",
+    "research_paper/tables/intel_v1_vs_v2_isolation.csv",
+    "research_paper/tables/intel_v1_vs_v2_isolation.md",
+    "research_paper/tables/intel_v2_batch_window_tradeoff.csv",
+    "research_paper/tables/intel_v2_batch_window_tradeoff.md",
+    "research_paper/tables/intel_v2_vs_v3_adaptive_impairment.csv",
+    "research_paper/tables/intel_v2_vs_v3_adaptive_impairment.md",
+    "research_paper/tables/intel_v3_adaptive_parameter_sweep.csv",
+    "research_paper/tables/intel_v3_adaptive_parameter_sweep.md"
+  ],
+  "submission_file_groups": {
+    "core_pipeline_files": [
+      "simulator/preprocess_common.py",
+      "simulator/preprocess_intel_lab.py",
+      "simulator/preprocess_aot.py",
+      "simulator/replay_publisher.py",
+      "simulator/replay_timing.py",
+      "gateway/app.py",
+      "gateway/forwarder.py",
+      "gateway/mqtt_ingest.py",
+      "gateway/schemas.py",
+      "ui/index.html",
+      "ui/demo_compare.html",
+      "experiments/analyze_run.py",
+      "experiments/impairment_proxy.py",
+      "experiments/run_sweep.py",
+      "experiments/run_demo.py",
+      "experiments/run_final_deliverables.py",
+      "experiments/build_report_assets.py",
+      "experiments/build_run_registry.py",
+      "experiments/package_paper_assets.py",
+      "experiments/sweep_aggregation.py",
+      "experiments/run_replicated_phase6.py",
+      "experiments/run_batch_window_sweep.py",
+      "experiments/run_v1_v2_isolation_sweep.py",
+      "experiments/run_adaptive_impairment_sweep.py",
+      "experiments/run_v3_adaptive_parameter_sweep.py",
+      "experiments/reproduce_all.sh",
+      "experiments/freeze_final_submission.py"
+    ],
+    "documentation_files": [
+      "README_reproducibility.md",
+      "report/final_report.md",
+      "report/reproducibility.md",
+      "report/experiment_pipeline_audit.md",
+      "report/metric_definitions.md",
+      "report/deliverable_gate.md",
+      "experiments/logs/run_registry.json"
+    ],
+    "report_asset_files": [
+      "report/assets/evidence_manifest.json",
+      "report/assets/old_evidence_inventory.json",
+      "report/assets/CLAIM_TO_EVIDENCE_MAP.md",
+      "report/assets/final_submission_manifest.json",
+      "report/assets/figures/intel_clean_qos0_latency_cdf.png",
+      "report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png",
+      "report/assets/figures/intel_outage_qos1_bandwidth_over_time.png",
+      "report/assets/figures/intel_outage_qos1_message_rate_over_time.png",
+      "report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png",
+      "report/assets/figures/main_outage_frame_rate.png",
+      "report/assets/figures/intel_qos_comparison.png",
+      "report/assets/figures/final_demo_compare.png",
+      "report/assets/figures/final_demo_baseline_dashboard.png",
+      "report/assets/figures/final_demo_smart_dashboard.png",
+      "report/assets/figures/intel_v2_batch_window_tradeoff.png",
+      "report/assets/figures/intel_v1_vs_v2_isolation.png",
+      "report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png",
+      "report/assets/tables/intel_primary_run_summary.csv",
+      "report/assets/tables/intel_primary_run_summary.md",
+      "report/assets/tables/intel_bandwidth_vs_v0.csv",
+      "report/assets/tables/intel_bandwidth_vs_v0.md",
+      "report/assets/tables/intel_qos_comparison.csv",
+      "report/assets/tables/intel_qos_comparison.md",
+      "report/assets/tables/intel_condensed_summary.csv",
+      "report/assets/tables/intel_condensed_summary.md",
+      "report/assets/tables/intel_main_summary_table.csv",
+      "report/assets/tables/intel_main_summary_table.md",
+      "report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv",
+      "report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.md",
+      "report/assets/tables/intel_jitter_summary.csv",
+      "report/assets/tables/intel_jitter_summary.md",
+      "report/assets/tables/aot_validation_summary.csv",
+      "report/assets/tables/intel_key_claims.md",
+      "report/assets/tables/intel_claim_guardrail_review.md",
+      "report/assets/tables/intel_v2_batch_window_tradeoff.csv",
+      "report/assets/tables/intel_v2_batch_window_tradeoff.md",
+      "report/assets/tables/intel_v1_vs_v2_isolation.csv",
+      "report/assets/tables/intel_v1_vs_v2_isolation.md",
+      "report/assets/tables/intel_v2_vs_v3_adaptive_impairment.csv",
+      "report/assets/tables/intel_v2_vs_v3_adaptive_impairment.md",
+      "report/assets/tables/intel_v3_adaptive_parameter_sweep.csv",
+      "report/assets/tables/intel_v3_adaptive_parameter_sweep.md"
+    ],
+    "paper_source_files": [
+      "research_paper/main.tex",
+      "research_paper/references.bib",
+      "research_paper/Sections/actionplan.tex",
+      "research_paper/Sections/approach.tex",
+      "research_paper/Sections/evaluation.tex",
+      "research_paper/Sections/introduction.tex",
+      "research_paper/Sections/related-work.tex",
+      "research_paper/Sections/TeamInfo.tex",
+      "research_paper/Sections/approach-cs537.png"
+    ],
+    "paper_asset_files": [
+      "research_paper/tables/paper_assets_manifest.json",
+      "research_paper/tables/paper_asset_index.md",
+      "research_paper/tables/intel_main_summary_table.tex",
+      "research_paper/Sections/approach-cs537.png",
+      "research_paper/figures/intel_clean_qos0_latency_cdf.png",
+      "research_paper/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png",
+      "research_paper/figures/main_outage_frame_rate.png",
+      "research_paper/tables/intel_main_summary_table.csv",
+      "research_paper/figures/final_demo_compare.png",
+      "research_paper/figures/intel_delay_qos0_inter_frame_gap_cdf.png",
+      "research_paper/figures/intel_outage_qos1_bandwidth_over_time.png",
+      "research_paper/figures/intel_outage_qos1_message_rate_over_time.png",
+      "research_paper/figures/intel_qos_comparison.png",
+      "research_paper/figures/intel_v1_vs_v2_isolation.png",
+      "research_paper/figures/intel_v2_batch_window_tradeoff.png",
+      "research_paper/figures/intel_v2_vs_v3_adaptive_impairment.png",
+      "research_paper/tables/intel_bandwidth_vs_v0.csv",
+      "research_paper/tables/intel_bandwidth_vs_v0.md",
+      "research_paper/tables/intel_claim_guardrail_review.md",
+      "research_paper/tables/intel_jitter_summary.csv",
+      "research_paper/tables/intel_jitter_summary.md",
+      "research_paper/tables/intel_outage_qos0_v0_vs_v4_freshness.csv",
+      "research_paper/tables/intel_outage_qos0_v0_vs_v4_freshness.md",
+      "research_paper/tables/intel_qos_comparison.csv",
+      "research_paper/tables/intel_qos_comparison.md",
+      "research_paper/tables/intel_v1_vs_v2_isolation.csv",
+      "research_paper/tables/intel_v1_vs_v2_isolation.md",
+      "research_paper/tables/intel_v2_batch_window_tradeoff.csv",
+      "research_paper/tables/intel_v2_batch_window_tradeoff.md",
+      "research_paper/tables/intel_v2_vs_v3_adaptive_impairment.csv",
+      "research_paper/tables/intel_v2_vs_v3_adaptive_impairment.md",
+      "research_paper/tables/intel_v3_adaptive_parameter_sweep.csv",
+      "research_paper/tables/intel_v3_adaptive_parameter_sweep.md"
+    ]
+  },
+  "validation_inputs": [
+    "tests/test_analysis.py",
+    "tests/test_app.py",
+    "tests/test_build_report_assets.py",
+    "tests/test_build_run_registry.py",
+    "tests/test_forwarder.py",
+    "tests/test_freeze_final_submission.py",
+    "tests/test_impairment.py",
+    "tests/test_impairment_proxy.py",
+    "tests/test_package_paper_assets.py",
+    "tests/test_playwright_capture.py",
+    "tests/test_preprocess_aot.py",
+    "tests/test_preprocess_intel_lab.py",
+    "tests/test_replay_timing.py",
+    "tests/test_run_adaptive_impairment_sweep.py",
+    "tests/test_run_batch_window_sweep.py",
+    "tests/test_run_demo.py",
+    "tests/test_run_final_deliverables.py",
+    "tests/test_run_replicated_phase6.py",
+    "tests/test_run_sweep.py",
+    "tests/test_run_v1_v2_isolation_sweep.py",
+    "tests/test_run_v3_adaptive_parameter_sweep.py",
+    "tests/test_schemas.py",
+    "tests/test_sweep_aggregation.py",
+    "experiments/capture_dashboard.mjs"
+  ],
+  "canonical_evidence_roots": [
+    {
+      "path": "experiments/logs/final-aot-validation-replicated-20260408-135251",
+      "classification": "validation"
+    },
+    {
+      "path": "experiments/logs/final-demo-20260403",
+      "classification": "demo"
+    },
+    {
+      "path": "experiments/logs/final-intel-primary-replicated-20260408-135251",
+      "classification": "primary-evidence"
+    },
+    {
+      "path": "experiments/logs/intel-v1-v2-isolation-replicated-20260408-135251",
+      "classification": "ablation"
+    },
+    {
+      "path": "experiments/logs/intel-v2-batch-window-replicated-20260408-135251",
+      "classification": "ablation"
+    },
+    {
+      "path": "experiments/logs/intel-v2-v3-adaptive-replicated-20260408-135251",
+      "classification": "ablation"
+    },
+    {
+      "path": "experiments/logs/intel-v3-adaptive-parameter-sweep-20260408-190517",
+      "classification": "ablation"
+    }
+  ],
+  "explicit_exclusions": [
+    {
+      "path": "PRD.md",
+      "reason": "Planning artifact; not part of the frozen submission package."
+    },
+    {
+      "path": "PROJECT_CHECKLIST.md",
+      "reason": "Execution checklist; retained in the repo but excluded from the frozen submission package."
+    },
+    {
+      "path": "q&a.md",
+      "reason": "Scratch planning notes; not part of the frozen submission package."
+    },
+    {
+      "path": "research-analysis.md",
+      "reason": "Working analysis notes; not part of the frozen submission package."
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "command_results": [
+      {
+        "name": "unittest_suite",
+        "command": [
+          "C:\\Users\\awseo\\Documents\\Education\\Masters\\CS 537 - Multimedia Systems\\Agrasandhani\\.venv\\Scripts\\python.exe",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-v"
+        ],
+        "status": "passed",
+        "blocking": true,
+        "returncode": 0,
+        "summary": "Ran 96 tests in 43.776s; OK",
+        "stdout": "",
+        "stderr": "test_analyze_run_classifies_missing_updates_by_proxy_frame_cause (test_analysis.AnalysisTests.test_analyze_run_classifies_missing_updates_by_proxy_frame_cause) ... ok\ntest_analyze_run_derives_latency_loss_and_stale_metrics (test_analysis.AnalysisTests.test_analyze_run_derives_latency_loss_and_stale_metrics) ... ok\ntest_analyze_run_derives_proxy_jitter_metrics_from_sent_frames (test_analysis.AnalysisTests.test_analyze_run_derives_proxy_jitter_metrics_from_sent_frames) ... ok\ntest_analyze_run_marks_legacy_gateway_logs_as_approximate (test_analysis.AnalysisTests.test_analyze_run_marks_legacy_gateway_logs_as_approximate) ... ok\ntest_analyze_run_marks_unaligned_proxy_frames_as_unavailable (test_analysis.AnalysisTests.test_analyze_run_marks_unaligned_proxy_frames_as_unavailable) ... ok\ntest_collect_run_summary_is_read_only (test_analysis.AnalysisTests.test_collect_run_summary_is_read_only) ... ok\ntest_plot_sweep_creates_expected_png_outputs (test_analysis.AnalysisTests.test_plot_sweep_creates_expected_png_outputs) ... ok\ntest_plot_sweep_script_runs_as_top_level_entrypoint (test_analysis.AnalysisTests.test_plot_sweep_script_runs_as_top_level_entrypoint) ... ok\ntest_get_config_returns_runtime_snapshot (test_app.AppEndpointTests.test_get_config_returns_runtime_snapshot) ... ok\ntest_metrics_expose_adaptive_and_freshness_fields (test_app.AppEndpointTests.test_metrics_expose_adaptive_and_freshness_fields) ... ok\ntest_patch_config_rejects_mode_change (test_app.AppEndpointTests.test_patch_config_rejects_mode_change) ... ok\ntest_patch_config_updates_forwarder_state (test_app.AppEndpointTests.test_patch_config_updates_forwarder_state) ... ok\ntest_build_report_assets_writes_adaptive_impairment_outputs_when_sweep_is_provided (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_adaptive_impairment_outputs_when_sweep_is_provided) ... ok\ntest_build_report_assets_writes_batch_window_tradeoff_outputs_when_batch_sweep_is_provided (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_batch_window_tradeoff_outputs_when_batch_sweep_is_provided) ... ok\ntest_build_report_assets_writes_expected_tables_figures_and_report_docs (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_expected_tables_figures_and_report_docs) ... ok\ntest_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep) ... ok\ntest_build_report_assets_writes_section7_parameter_sweep_outputs_and_fallback_wording (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_section7_parameter_sweep_outputs_and_fallback_wording) ... ok\ntest_build_report_assets_writes_v1_v2_isolation_outputs_when_sweep_is_provided (test_build_report_assets.BuildReportAssetsTests.test_build_report_assets_writes_v1_v2_isolation_outputs_when_sweep_is_provided) ... ok\ntest_build_registry_classifies_replicated_roots_legacy_roots_and_exploratory_roots (test_build_run_registry.BuildRunRegistryTests.test_build_registry_classifies_replicated_roots_legacy_roots_and_exploratory_roots) ... ok\ntest_invalid_payload_does_not_break_pending_batch (test_forwarder.ForwarderTests.test_invalid_payload_does_not_break_pending_batch) ... ok\ntest_metrics_report_stale_sensor_count_with_ttl (test_forwarder.ForwarderTests.test_metrics_report_stale_sensor_count_with_ttl) ... ok\ntest_runtime_config_update_applies_safe_fields (test_forwarder.ForwarderTests.test_runtime_config_update_applies_safe_fields) ... ok\ntest_runtime_config_update_rejects_mode_change (test_forwarder.ForwarderTests.test_runtime_config_update_rejects_mode_change) ... ok\ntest_v0_forwarder_tracks_metrics_and_latest_snapshot (test_forwarder.ForwarderTests.test_v0_forwarder_tracks_metrics_and_latest_snapshot) ... ok\ntest_v1_flushes_batch_on_threshold (test_forwarder.ForwarderTests.test_v1_flushes_batch_on_threshold) ... ok\ntest_v1_flushes_batch_on_timer (test_forwarder.ForwarderTests.test_v1_flushes_batch_on_timer) ... ok\ntest_v2_allows_same_duplicate_key_after_ttl_expiry (test_forwarder.ForwarderTests.test_v2_allows_same_duplicate_key_after_ttl_expiry) ... ok\ntest_v2_compacts_to_latest_per_sensor_metric (test_forwarder.ForwarderTests.test_v2_compacts_to_latest_per_sensor_metric) ... ok\ntest_v2_suppresses_exact_duplicates (test_forwarder.ForwarderTests.test_v2_suppresses_exact_duplicates) ... ok\ntest_v2_value_dedup_suppresses_unchanged_emissions (test_forwarder.ForwarderTests.test_v2_value_dedup_suppresses_unchanged_emissions) ... ok\ntest_v3_adapts_batch_window_up_on_backlog (test_forwarder.ForwarderTests.test_v3_adapts_batch_window_up_on_backlog) ... ok\ntest_v3_recovers_batch_window_after_healthy_flush (test_forwarder.ForwarderTests.test_v3_recovers_batch_window_after_healthy_flush) ... ok\ntest_v4_register_client_receives_snapshot_frame (test_forwarder.ForwarderTests.test_v4_register_client_receives_snapshot_frame) ... ok\ntest_v4_same_value_update_refreshes_ttl_even_with_value_dedup (test_forwarder.ForwarderTests.test_v4_same_value_update_refreshes_ttl_even_with_value_dedup) ... ok\ntest_freeze_drafts_manual_signoff_only_when_validation_passes (test_freeze_final_submission.FreezeFinalSubmissionTests.test_freeze_drafts_manual_signoff_only_when_validation_passes) ... ok\ntest_freeze_writes_manifest_and_blocks_on_unmanaged_report_asset (test_freeze_final_submission.FreezeFinalSubmissionTests.test_freeze_writes_manifest_and_blocks_on_unmanaged_report_asset) ... ok\ntest_load_scenario_supports_repo_json (test_impairment.ImpairmentTests.test_load_scenario_supports_repo_json) ... ok\ntest_metrics_snapshot_contains_uptime_and_phase (test_impairment.ImpairmentTests.test_metrics_snapshot_contains_uptime_and_phase) ... ok\ntest_outage_phase_clock_starts_on_first_frame (test_impairment.ImpairmentTests.test_outage_phase_clock_starts_on_first_frame) ... ok\ntest_seeded_loss_behavior_is_deterministic (test_impairment.ImpairmentTests.test_seeded_loss_behavior_is_deterministic) ... ok\ntest_token_bucket_applies_wait_when_over_rate (test_impairment.ImpairmentTests.test_token_bucket_applies_wait_when_over_rate) ... ok\ntest_proxy_relays_ws_and_proxies_config (test_impairment_proxy.ImpairmentProxyIntegrationTests.test_proxy_relays_ws_and_proxies_config) ... ok\ntest_package_assets_curates_main_and_appendix_assets_and_cleans_stale_outputs (test_package_paper_assets.PackagePaperAssetsTests.test_package_assets_curates_main_and_appendix_assets_and_cleans_stale_outputs) ... ok\ntest_capture_dashboard_check_only_reports_missing_browser_cleanly (test_playwright_capture.PlaywrightCaptureTests.test_capture_dashboard_check_only_reports_missing_browser_cleanly) ... ok\ntest_capture_dashboard_check_only_succeeds_when_playwright_is_ready (test_playwright_capture.PlaywrightCaptureTests.test_capture_dashboard_check_only_succeeds_when_playwright_is_ready) ... ok\ntest_capture_dashboard_screenshot_only_captures_generic_page (test_playwright_capture.PlaywrightCaptureTests.test_capture_dashboard_screenshot_only_captures_generic_page) ... ok\ntest_capture_dashboard_script_exports_csv_and_summary (test_playwright_capture.PlaywrightCaptureTests.test_capture_dashboard_script_exports_csv_and_summary) ... ok\ntest_normalize_aot_applies_sensor_and_row_limits_after_normalization (test_preprocess_aot.AotPreprocessTests.test_normalize_aot_applies_sensor_and_row_limits_after_normalization) ... ok\ntest_normalize_aot_from_tar_filters_and_orders_rows (test_preprocess_aot.AotPreprocessTests.test_normalize_aot_from_tar_filters_and_orders_rows) ... ok\ntest_normalize_intel_gzip_emits_all_supported_metrics (test_preprocess_intel_lab.IntelLabPreprocessTests.test_normalize_intel_gzip_emits_all_supported_metrics) ... ok\ntest_normalize_intel_respects_sensor_and_row_limits (test_preprocess_intel_lab.IntelLabPreprocessTests.test_normalize_intel_respects_sensor_and_row_limits) ... ok\ntest_after_burst_the_saved_time_is_preserved (test_replay_timing.ReplayTimingTests.test_after_burst_the_saved_time_is_preserved) ... ok\ntest_baseline_replay_uses_plain_replay_speed (test_replay_timing.ReplayTimingTests.test_baseline_replay_uses_plain_replay_speed) ... ok\ntest_burst_only_accelerates_inside_the_configured_window (test_replay_timing.ReplayTimingTests.test_burst_only_accelerates_inside_the_configured_window) ... ok\ntest_build_sweep_config_exposes_adaptive_overrides (test_run_adaptive_impairment_sweep.RunAdaptiveImpairmentSweepTests.test_build_sweep_config_exposes_adaptive_overrides) ... ok\ntest_parse_args_uses_expected_defaults (test_run_adaptive_impairment_sweep.RunAdaptiveImpairmentSweepTests.test_parse_args_uses_expected_defaults) ... ok\ntest_run_adaptive_impairment_sweep_writes_manifest_and_summary_csv (test_run_adaptive_impairment_sweep.RunAdaptiveImpairmentSweepTests.test_run_adaptive_impairment_sweep_writes_manifest_and_summary_csv) ... ok\ntest_build_run_label_suffix_formats_batch_window (test_run_batch_window_sweep.RunBatchWindowSweepTests.test_build_run_label_suffix_formats_batch_window) ... ok\ntest_parse_args_uses_expected_defaults (test_run_batch_window_sweep.RunBatchWindowSweepTests.test_parse_args_uses_expected_defaults) ... ok\ntest_run_batch_window_sweep_writes_manifest_and_expands_windows (test_run_batch_window_sweep.RunBatchWindowSweepTests.test_run_batch_window_sweep_writes_manifest_and_expands_windows) ... ok\ntest_build_compare_url_uses_query_params_for_urls_and_labels (test_run_demo.RunDemoTests.test_build_compare_url_uses_query_params_for_urls_and_labels) ... ok\ntest_default_demo_scenario_has_expected_phase_timing (test_run_demo.RunDemoTests.test_default_demo_scenario_has_expected_phase_timing) ... ok\ntest_main_prints_compare_url_after_helper_returns (test_run_demo.RunDemoTests.test_main_prints_compare_url_after_helper_returns) ... ok\ntest_parse_args_defaults_match_demo_profile (test_run_demo.RunDemoTests.test_parse_args_defaults_match_demo_profile) ... ok\ntest_run_demo_capture_artifacts_starts_dashboard_and_compare_capture (test_run_demo.RunDemoTests.test_run_demo_capture_artifacts_starts_dashboard_and_compare_capture) ... ok\ntest_run_demo_cleans_up_when_capture_process_fails (test_run_demo.RunDemoTests.test_run_demo_cleans_up_when_capture_process_fails) ... ok\ntest_run_demo_writes_manifest_without_capture_processes (test_run_demo.RunDemoTests.test_run_demo_writes_manifest_without_capture_processes) ... ok\ntest_validate_environment_auto_ports_reassigns_busy_ports (test_run_demo.RunDemoTests.test_validate_environment_auto_ports_reassigns_busy_ports) ... ok\ntest_validate_environment_rejects_busy_service_port_without_auto_ports (test_run_demo.RunDemoTests.test_validate_environment_rejects_busy_service_port_without_auto_ports) ... ok\ntest_validate_environment_rejects_missing_scenario (test_run_demo.RunDemoTests.test_validate_environment_rejects_missing_scenario) ... ok\ntest_validate_environment_rejects_unreachable_mqtt (test_run_demo.RunDemoTests.test_validate_environment_rejects_unreachable_mqtt) ... ok\ntest_build_configs_match_final_matrix (test_run_final_deliverables.RunFinalDeliverablesTests.test_build_configs_match_final_matrix) ... ok\ntest_parse_args_uses_expected_defaults (test_run_final_deliverables.RunFinalDeliverablesTests.test_parse_args_uses_expected_defaults) ... ok\ntest_run_final_deliverables_writes_manifest_and_calls_pipeline (test_run_final_deliverables.RunFinalDeliverablesTests.test_run_final_deliverables_writes_manifest_and_calls_pipeline) ... ok\ntest_parse_args_defaults_to_plan_only_and_local_raw_sources (test_run_replicated_phase6.RunReplicatedPhase6Tests.test_parse_args_defaults_to_plan_only_and_local_raw_sources) ... ok\ntest_run_phase6_only_executes_when_flag_is_present (test_run_replicated_phase6.RunReplicatedPhase6Tests.test_run_phase6_only_executes_when_flag_is_present) ... ok\ntest_run_phase6_writes_plan_only_manifest_with_exact_matrix (test_run_replicated_phase6.RunReplicatedPhase6Tests.test_run_phase6_writes_plan_only_manifest_with_exact_matrix) ... ok\ntest_browser_capture_preflight_requires_node (test_run_sweep.RunSweepTests.test_browser_capture_preflight_requires_node) ... ok\ntest_browser_capture_preflight_surfaces_capture_script_failure (test_run_sweep.RunSweepTests.test_browser_capture_preflight_surfaces_capture_script_failure) ... ok\ntest_parse_args_short_smoke_profile_sets_expected_defaults (test_run_sweep.RunSweepTests.test_parse_args_short_smoke_profile_sets_expected_defaults) ... ok\ntest_run_once_propagates_batch_window_ms_to_gateway_env (test_run_sweep.RunSweepTests.test_run_once_propagates_batch_window_ms_to_gateway_env) ... ok\ntest_run_once_propagates_gateway_env_overrides_to_gateway_env (test_run_sweep.RunSweepTests.test_run_once_propagates_gateway_env_overrides_to_gateway_env) ... ok\ntest_run_once_writes_manifest_v2_for_trial_layout_and_sets_impairment_seed (test_run_sweep.RunSweepTests.test_run_once_writes_manifest_v2_for_trial_layout_and_sets_impairment_seed) ... ok\ntest_run_sweep_returns_sweep_dir_and_completed_runs (test_run_sweep.RunSweepTests.test_run_sweep_returns_sweep_dir_and_completed_runs) ... ok\ntest_build_run_label_suffix_formats_batch_window (test_run_v1_v2_isolation_sweep.RunV1V2IsolationSweepTests.test_build_run_label_suffix_formats_batch_window) ... ok\ntest_parse_args_uses_expected_defaults (test_run_v1_v2_isolation_sweep.RunV1V2IsolationSweepTests.test_parse_args_uses_expected_defaults) ... ok\ntest_run_v1_v2_isolation_sweep_writes_manifest_and_summary_csv (test_run_v1_v2_isolation_sweep.RunV1V2IsolationSweepTests.test_run_v1_v2_isolation_sweep_writes_manifest_and_summary_csv) ... ok\ntest_parse_args_uses_expected_defaults (test_run_v3_adaptive_parameter_sweep.RunV3AdaptiveParameterSweepTests.test_parse_args_uses_expected_defaults) ... ok\ntest_run_v3_adaptive_parameter_sweep_writes_manifest_summary_and_aggregates (test_run_v3_adaptive_parameter_sweep.RunV3AdaptiveParameterSweepTests.test_run_v3_adaptive_parameter_sweep_writes_manifest_summary_and_aggregates) ... ok\ntest_aggregate_frame_accepts_snapshot_payload (test_schemas.SensorMessageTests.test_aggregate_frame_accepts_snapshot_payload) ... ok\ntest_aggregate_frame_accepts_valid_payload (test_schemas.SensorMessageTests.test_aggregate_frame_accepts_valid_payload) ... ok\ntest_schema_accepts_valid_payload (test_schemas.SensorMessageTests.test_schema_accepts_valid_payload) ... ok\ntest_schema_rejects_unknown_fields (test_schemas.SensorMessageTests.test_schema_rejects_unknown_fields) ... ok\ntest_aggregate_summary_rows_groups_multi_trial_and_special_condition_keys (test_sweep_aggregation.SweepAggregationTests.test_aggregate_summary_rows_groups_multi_trial_and_special_condition_keys) ... ok\ntest_load_summary_rows_supports_legacy_and_trial_layout (test_sweep_aggregation.SweepAggregationTests.test_load_summary_rows_supports_legacy_and_trial_layout) ... ok\ntest_write_condition_aggregates_writes_root_level_artifact (test_sweep_aggregation.SweepAggregationTests.test_write_condition_aggregates_writes_root_level_artifact) ... ok\n\n----------------------------------------------------------------------\nRan 96 tests in 43.776s\n\nOK"
+      },
+      {
+        "name": "dashboard_capture_preflight",
+        "command": [
+          "node",
+          "experiments/capture_dashboard.mjs",
+          "--check-only"
+        ],
+        "status": "passed",
+        "blocking": true,
+        "returncode": 0,
+        "summary": "Playwright and Chromium are available.",
+        "stdout": "Playwright and Chromium are available.",
+        "stderr": ""
+      }
+    ],
+    "static_checks": [
+      {
+        "name": "tex_reference_paths",
+        "status": "passed",
+        "blocking": true,
+        "missing_references": []
+      },
+      {
+        "name": "citation_keys",
+        "status": "passed",
+        "blocking": true,
+        "missing_citations": []
+      },
+      {
+        "name": "report_asset_inventory",
+        "status": "passed",
+        "blocking": true,
+        "extra_files": [],
+        "missing_files": []
+      },
+      {
+        "name": "paper_asset_inventory",
+        "status": "passed",
+        "blocking": true,
+        "extra_files": [],
+        "missing_files": []
+      },
+      {
+        "name": "document_provenance_anchors",
+        "status": "passed",
+        "blocking": true,
+        "missing": []
+      },
+      {
+        "name": "latex_toolchain",
+        "status": "warning",
+        "blocking": false,
+        "available_tools": {
+          "latexmk": null,
+          "pdflatex": null,
+          "biber": null
+        },
+        "missing_tools": [
+          "latexmk",
+          "pdflatex",
+          "biber"
+        ],
+        "limitation": "LaTeX toolchain unavailable; source tree frozen as build-ready only."
+      }
+    ],
+    "blocking_findings": [],
+    "environment_limitations": [
+      "LaTeX toolchain unavailable; source tree frozen as build-ready only."
+    ]
+  },
+  "environment_limitations": [
+    "LaTeX toolchain unavailable; source tree frozen as build-ready only."
+  ],
+  "manual_signoff_draft": {
+    "status": "draft",
+    "summary": "Freeze validation passed; manual research-significance confirmation is still required before the project is declared fully frozen.",
+    "recommended_points": [
+      "Broad downstream-byte reduction remains unsupported; keep the fallback wording from report/assets/tables/intel_key_claims.md.",
+      "Adaptive control remains a null-result/supporting claim, not a headline result.",
+      "Keep the current main-paper asset slate recorded in research_paper/tables/paper_asset_index.md.",
+      "No extra reruns are recommended before freeze because the bounded Section 7 hard stop is already locked."
+    ]
+  },
+  "source_manifests": {
+    "report_evidence_manifest_path": "report/assets/evidence_manifest.json",
+    "report_claim_map_path": "report/assets/CLAIM_TO_EVIDENCE_MAP.md",
+    "paper_asset_manifest_path": "research_paper/tables/paper_assets_manifest.json",
+    "run_registry_path": "experiments/logs/run_registry.json"
+  },
+  "expected_provenance_anchors": {
+    "intel_sweep_dir": "experiments\\logs\\final-intel-primary-replicated-20260408-135251",
+    "aot_sweep_dir": "experiments\\logs\\final-aot-validation-replicated-20260408-135251",
+    "demo_dir": "experiments\\logs\\final-demo-20260403\\demo"
+  }
+}

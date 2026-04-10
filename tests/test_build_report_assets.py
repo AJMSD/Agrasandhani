@@ -68,6 +68,7 @@ class BuildReportAssetsTests(unittest.TestCase):
 
             self.assertEqual(manifest["intel_sweep_dir"], str(intel_sweep))
             self.assertTrue((output_dir / "evidence_manifest.json").exists())
+            self.assertTrue((output_dir / "old_evidence_inventory.json").exists())
             self.assertTrue((output_dir / "tables" / "intel_primary_run_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_bandwidth_vs_v0.md").exists())
@@ -77,28 +78,149 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_condensed_summary.md").exists())
             self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").exists())
+            self.assertTrue((output_dir / "tables" / "intel_jitter_summary.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_jitter_summary.md").exists())
             self.assertTrue((output_dir / "tables" / "aot_validation_summary.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_key_claims.md").exists())
             self.assertTrue((output_dir / "tables" / "intel_claim_guardrail_review.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_clean_qos0_latency_cdf.png").exists())
+            self.assertTrue((output_dir / "figures" / "intel_delay_qos0_inter_frame_gap_cdf.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_bandwidth_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos1_message_rate_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_outage_qos0_v0_vs_v4_age_over_time.png").exists())
             self.assertTrue((output_dir / "figures" / "intel_qos_comparison.png").exists())
             self.assertTrue((output_dir / "figures" / "final_demo_compare.png").exists())
+            self.assertTrue((output_dir / "CLAIM_TO_EVIDENCE_MAP.md").exists())
             self.assertTrue((report_dir / "final_report.md").exists())
             self.assertTrue((report_dir / "deliverable_gate.md").exists())
+            saved_manifest = json.loads((output_dir / "evidence_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_manifest["schema_version"], 2)
+            self.assertEqual(saved_manifest["run_registry_path"], "experiments/logs/run_registry.json")
+            self.assertEqual(saved_manifest["old_evidence_inventory_path"], "report/assets/old_evidence_inventory.json")
+            self.assertEqual(saved_manifest["claim_map_path"], "report/assets/CLAIM_TO_EVIDENCE_MAP.md")
+            self.assertIn("asset_provenance", saved_manifest)
+            self.assertIn("report/assets/tables/intel_primary_run_summary.csv", {Path(path).as_posix() for path in saved_manifest["generated_tables"]})
+            self.assertIn("report/assets/tables/intel_primary_run_summary.md", {Path(path).as_posix() for path in saved_manifest["generated_tables"]})
+            inventory = json.loads((output_dir / "old_evidence_inventory.json").read_text(encoding="utf-8"))
+            self.assertEqual(inventory["schema_version"], 1)
+            self.assertEqual(inventory["inventory_scope"], "current committed report figures/tables")
+            self.assertEqual(inventory["compatibility_mirror_of"], "report/assets/evidence_manifest.json")
+            self.assertEqual(saved_manifest["asset_provenance"], inventory["entries"])
+            manifest_bandwidth_entry = self._provenance_entry_by_path(
+                saved_manifest["asset_provenance"],
+                "report/assets/tables/intel_bandwidth_vs_v0.csv",
+            )
+            self.assertEqual(
+                manifest_bandwidth_entry["aggregate_input_artifacts"],
+                [(intel_sweep / "condition_aggregates.json").as_posix()],
+            )
+            manifest_demo_entry = self._provenance_entry_by_path(
+                saved_manifest["asset_provenance"],
+                "report/assets/figures/final_demo_compare.png",
+            )
+            self.assertEqual(manifest_demo_entry["aggregate_input_artifacts"], [])
+            main_outage_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/main_outage_frame_rate.png",
+            )
+            self.assertEqual(main_outage_entry["source_sweep_ids"], ["final-intel-primary-20260403"])
+            self.assertEqual(
+                main_outage_entry["source_run_ids"],
+                ["v0-qos0-outage_5s", "v2-qos0-outage_5s", "v4-qos0-outage_5s"],
+            )
+            bandwidth_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/tables/intel_bandwidth_vs_v0.csv",
+            )
+            self.assertEqual(
+                bandwidth_entry["source_run_ids"],
+                [
+                    "v0-qos0-bandwidth_200kbps",
+                    "v0-qos0-clean",
+                    "v0-qos0-loss_2pct",
+                    "v0-qos0-outage_5s",
+                    "v2-qos0-bandwidth_200kbps",
+                    "v2-qos0-clean",
+                    "v2-qos0-loss_2pct",
+                    "v2-qos0-outage_5s",
+                    "v4-qos0-bandwidth_200kbps",
+                    "v4-qos0-clean",
+                    "v4-qos0-loss_2pct",
+                    "v4-qos0-outage_5s",
+                ],
+            )
+            demo_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/final_demo_compare.png",
+            )
+            self.assertEqual(demo_entry["source_sweep_ids"], ["final-demo-20260403"])
+            self.assertEqual(demo_entry["generation_script"], "experiments/build_report_assets.py")
+            self.assertNotIn("source_run_ids", demo_entry)
+            self.assertFalse(
+                any(entry["asset_path"] == "report/assets/figures/file.png" for entry in inventory["entries"])
+            )
+            self.assertFalse(
+                any(entry["asset_path"].startswith("research_paper/") for entry in inventory["entries"])
+            )
+            self.assertFalse(
+                any(
+                    entry["asset_path"] == "report/assets/figures/intel_v2_batch_window_tradeoff.png"
+                    for entry in inventory["entries"]
+                )
+            )
+            self.assertFalse(
+                any(
+                    entry["asset_path"] == "report/assets/figures/intel_v1_vs_v2_isolation.png"
+                    for entry in inventory["entries"]
+                )
+            )
+            self.assertFalse(
+                any(
+                    entry["asset_path"] == "report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png"
+                    for entry in inventory["entries"]
+                )
+            )
+            jitter_table_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/tables/intel_jitter_summary.csv",
+            )
+            self.assertEqual(jitter_table_entry["source_sweep_ids"], ["final-intel-primary-20260403"])
+            jitter_figure_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png",
+            )
+            self.assertEqual(
+                jitter_figure_entry["source_run_ids"],
+                [
+                    "v0-qos0-delay_50ms_jitter20ms",
+                    "v2-qos0-delay_50ms_jitter20ms",
+                    "v4-qos0-delay_50ms_jitter20ms",
+                ],
+            )
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("did not drop below V0", key_claims)
+            self.assertIn(
+                "Agrasandhani reduced downstream frame cadence and message burstiness, not payload bytes, in this setup.",
+                key_claims,
+            )
             self.assertIn("age-of-information trace", key_claims)
             self.assertIn("retained 6 latest rows versus 6", key_claims)
+            jitter_table = (output_dir / "tables" / "intel_jitter_summary.md").read_text(encoding="utf-8")
+            self.assertIn("| source_sweep | comparison_family | variant | scenario | mqtt_qos |", jitter_table)
+            self.assertIn("| final-intel-primary-20260403 | intel_primary | v0 | clean | 0 | 1 | 17000.0 |", jitter_table)
+            claim_map = (output_dir / "CLAIM_TO_EVIDENCE_MAP.md").read_text(encoding="utf-8")
+            self.assertIn("intel_delay_qos0_inter_frame_gap_cdf.png; intel_jitter_summary.md", claim_map)
+            self.assertIn("Proxy inter-frame gaps are the canonical jitter/stability source of truth", claim_map)
             guardrail_review = (output_dir / "tables" / "intel_claim_guardrail_review.md").read_text(encoding="utf-8")
+            self.assertIn("Do not claim downstream byte reduction unless replicated bytes fall below V0", guardrail_review)
             self.assertIn("Do not claim lower latency unless measured", guardrail_review)
             self.assertIn("Do not claim improved reliability unless reliability is defined", guardrail_review)
             self.assertIn("Do not claim reduced network loss", guardrail_review)
             self.assertIn("safe_wording", guardrail_review)
             bandwidth_table = (output_dir / "tables" / "intel_bandwidth_vs_v0.md").read_text(encoding="utf-8")
-            self.assertIn("| clean | v2 | 9800 | 13800 | 40.8% |", bandwidth_table)
+            self.assertIn("| baseline_n | variant_n |", bandwidth_table)
+            self.assertIn("scenario_byte_claim_classification", bandwidth_table)
+            self.assertIn("| clean | v2 | 1 | 1 | 9800.0 |", bandwidth_table)
             qos_table = (output_dir / "tables" / "intel_qos_comparison.md").read_text(encoding="utf-8")
             self.assertIn("| clean | v0 |", qos_table)
             self.assertIn("| qos0_latency_mean_ms |", qos_table)
@@ -132,6 +254,9 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("### 2.1 Latency metrics", final_report)
             self.assertIn("four latency summaries", final_report)
             self.assertIn("The explicit Intel qos0 bandwidth comparison answers the first paper question directly.", final_report)
+            self.assertIn("### 2.2 Stability metrics and phase handling", final_report)
+            self.assertIn("intel_jitter_summary.md", final_report)
+            self.assertIn("intel_delay_qos0_inter_frame_gap_cdf.png", final_report)
             self.assertIn("intel_outage_qos1_bandwidth_over_time.png", final_report)
             self.assertIn("should not be read as evidence of a payload-byte reduction", final_report)
             self.assertIn("main_outage_frame_rate.png", final_report)
@@ -144,12 +269,19 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertIn("intel_bandwidth_vs_v0.csv", deliverable_gate)
             self.assertIn("intel_qos_comparison.csv", deliverable_gate)
             self.assertIn("intel_condensed_summary.csv", deliverable_gate)
+            self.assertIn("intel_jitter_summary.csv", deliverable_gate)
+            self.assertIn("intel_delay_qos0_inter_frame_gap_cdf.png", deliverable_gate)
+            self.assertIn("CLAIM_TO_EVIDENCE_MAP.md", deliverable_gate)
             self.assertIn("intel_outage_qos0_v0_vs_v4_freshness.csv", deliverable_gate)
             self.assertIn("intel_claim_guardrail_review.md", deliverable_gate)
             self.assertIn("M1-M3 System Path", deliverable_gate)
             self.assertIn("tests/test_run_final_deliverables.py", deliverable_gate)
-            self.assertIn(str(output_dir / "tables" / "intel_condensed_summary.csv"), manifest["generated_tables"])
-            self.assertIn(str(output_dir / "tables" / "intel_claim_guardrail_review.md"), manifest["generated_tables"])
+            generated_tables = {Path(path).as_posix() for path in manifest["generated_tables"]}
+            generated_figures = {Path(path).as_posix() for path in manifest["generated_figures"]}
+            self.assertIn("report/assets/tables/intel_condensed_summary.csv", generated_tables)
+            self.assertIn("report/assets/tables/intel_jitter_summary.csv", generated_tables)
+            self.assertIn("report/assets/figures/intel_delay_qos0_inter_frame_gap_cdf.png", generated_figures)
+            self.assertIn("report/assets/tables/intel_claim_guardrail_review.md", generated_tables)
 
     def test_build_report_assets_writes_outage_freshness_outputs_from_primary_sweep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir_name:
@@ -191,8 +323,8 @@ class BuildReportAssetsTests(unittest.TestCase):
                     output_dir=output_dir,
                 )
 
-            self.assertIn(str(output_dir / "figures" / "intel_outage_qos0_v0_vs_v4_age_over_time.png"), manifest["generated_figures"])
-            self.assertIn(str(output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.csv"), manifest["generated_tables"])
+            self.assertIn("report/assets/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png", {Path(path).as_posix() for path in manifest["generated_figures"]})
+            self.assertIn("report/assets/tables/intel_outage_qos0_v0_vs_v4_freshness.csv", {Path(path).as_posix() for path in manifest["generated_tables"]})
             freshness_table = (output_dir / "tables" / "intel_outage_qos0_v0_vs_v4_freshness.md").read_text(encoding="utf-8")
             self.assertIn("| v0 | 1 | 2.0 | 2.0 | 1 | 1 | 28.0 | 28.0 | 28.0 | 6 | 6 |", freshness_table)
             self.assertIn("| v4 | 1 | 242.0 | 242.0 | 1 | 1 | 268.0 | 268.0 | 268.0 | 6 | 6 |", freshness_table)
@@ -265,6 +397,12 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v2_batch_window_tradeoff.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v2_batch_window_tradeoff.png").exists())
+            inventory = json.loads((output_dir / "old_evidence_inventory.json").read_text(encoding="utf-8"))
+            batch_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/intel_v2_batch_window_tradeoff.png",
+            )
+            self.assertEqual(batch_entry["source_sweep_ids"], ["intel-v2-batch-window-20260403"])
             tradeoff_table = (output_dir / "tables" / "intel_v2_batch_window_tradeoff.md").read_text(encoding="utf-8")
             self.assertIn("latency_mean_ms", tradeoff_table)
             self.assertIn("latency_p50_ms", tradeoff_table)
@@ -356,6 +494,12 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v1_vs_v2_isolation.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_v1_vs_v2_isolation.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v1_vs_v2_isolation.png").exists())
+            inventory = json.loads((output_dir / "old_evidence_inventory.json").read_text(encoding="utf-8"))
+            isolation_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/intel_v1_vs_v2_isolation.png",
+            )
+            self.assertEqual(isolation_entry["source_sweep_ids"], ["intel-v1-v2-isolation-20260403"])
             isolation_table = (output_dir / "tables" / "intel_v1_vs_v2_isolation.md").read_text(encoding="utf-8")
             self.assertIn("v1_latency_mean_ms", isolation_table)
             self.assertIn("v1_latency_p50_ms", isolation_table)
@@ -466,6 +610,38 @@ class BuildReportAssetsTests(unittest.TestCase):
                 last_reason="recover:healthy(queue_depth=0,send_duration_ms=10)",
                 update_rates=[24, 29, 20],
             )
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v2",
+                scenario="delay_50ms_jitter20ms",
+                latency_p95=252,
+                stale_fraction=0.02,
+                max_update_rate_per_s=31,
+                frames=14,
+                bytes_out=13300,
+                effective_windows=[250, 250, 250],
+                adaptation_reasons=["fixed_window", "fixed_window", "fixed_window"],
+                increase_events=0,
+                decrease_events=0,
+                last_reason="fixed_window",
+                update_rates=[26, 31, 22],
+            )
+            self._create_adaptive_run(
+                adaptive_sweep,
+                variant="v3",
+                scenario="delay_50ms_jitter20ms",
+                latency_p95=258,
+                stale_fraction=0.018,
+                max_update_rate_per_s=30,
+                frames=13,
+                bytes_out=13150,
+                effective_windows=[250, 350, 300],
+                adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=50", "recover:healthy(queue_depth=2,send_duration_ms=15)"],
+                increase_events=1,
+                decrease_events=1,
+                last_reason="recover:healthy(queue_depth=2,send_duration_ms=15)",
+                update_rates=[25, 30, 21],
+            )
 
             self._create_demo_artifacts(demo_dir)
 
@@ -483,12 +659,26 @@ class BuildReportAssetsTests(unittest.TestCase):
             self.assertTrue((output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.csv").exists())
             self.assertTrue((output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").exists())
             self.assertTrue((output_dir / "figures" / "intel_v2_vs_v3_adaptive_impairment.png").exists())
+            inventory = json.loads((output_dir / "old_evidence_inventory.json").read_text(encoding="utf-8"))
+            adaptive_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/figures/intel_v2_vs_v3_adaptive_impairment.png",
+            )
+            self.assertEqual(adaptive_entry["source_sweep_ids"], ["intel-v2-v3-adaptive-20260404"])
+            jitter_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/tables/intel_jitter_summary.csv",
+            )
+            self.assertEqual(
+                jitter_entry["source_sweep_ids"],
+                ["final-intel-primary-20260403", "intel-v2-v3-adaptive-20260404"],
+            )
             adaptive_table = (output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").read_text(encoding="utf-8")
-            self.assertIn("v2_latency_mean_ms", adaptive_table)
-            self.assertIn("v2_latency_p50_ms", adaptive_table)
-            self.assertIn("v3_latency_mean_ms", adaptive_table)
-            self.assertIn("v3_latency_p99_ms", adaptive_table)
-            self.assertIn("| bandwidth_200kbps | 235.0 | 233.0 | 260.0 | 280.0 | 215.0 | 213.0 | 240.0 | 260.0 |", adaptive_table)
+            self.assertIn("| scenario | v2_n | v3_n |", adaptive_table)
+            self.assertIn("stability_improvement_metrics", adaptive_table)
+            self.assertIn("v3_last_adaptation_reasons", adaptive_table)
+            self.assertIn("| bandwidth_200kbps | 1 | 1 |", adaptive_table)
+            self.assertIn("| delay_50ms_jitter20ms | 1 | 1 |", adaptive_table)
             key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
             self.assertIn("Intel V2 versus V3 adaptive sweep shows what adaptive batching changed under impairment", key_claims)
             final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
@@ -497,6 +687,147 @@ class BuildReportAssetsTests(unittest.TestCase):
             deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
             self.assertIn("intel_v2_vs_v3_adaptive_impairment.csv", deliverable_gate)
             self.assertIn("intel-v2-v3-adaptive-20260404", deliverable_gate)
+
+    def test_build_report_assets_writes_section7_parameter_sweep_outputs_and_fallback_wording(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir_name:
+            base_dir = Path(tmp_dir_name)
+            intel_sweep = base_dir / "final-intel-primary-20260403"
+            aot_sweep = base_dir / "final-aot-validation-20260403"
+            demo_dir = base_dir / "final-demo-20260403" / "demo"
+            adaptive_sweep = base_dir / "intel-v2-v3-adaptive-replicated-20260408"
+            parameter_sweep = base_dir / "intel-v3-adaptive-parameter-sweep-20260408"
+            output_dir = base_dir / "report-assets"
+
+            for variant, latency, frames, bytes_out in (("v0", 8, 118, 9800), ("v2", 200, 23, 13800), ("v4", 248, 19, 14900)):
+                self._create_intel_run(intel_sweep, variant, "clean", 0, latency_p95=latency, frames=frames, bytes_out=bytes_out)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 0, latency_p95=latency + 4, frames=frames - 5, bytes_out=bytes_out - 300)
+                self._create_intel_run(intel_sweep, variant, "outage_5s", 1, latency_p95=latency + 5, frames=frames - 5, bytes_out=bytes_out - 300)
+            for scenario in ("bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"):
+                for variant, latency, frames, bytes_out in (("v0", 10, 100, 9000), ("v2", 220, 24, 13000), ("v4", 245, 20, 14000)):
+                    for qos in (0, 1):
+                        self._create_intel_run(
+                            intel_sweep,
+                            variant,
+                            scenario,
+                            qos,
+                            latency_p95=latency,
+                            frames=frames,
+                            bytes_out=bytes_out,
+                        )
+
+            self._create_aot_run(aot_sweep, "v0", "clean", 0, latency_p95=12, frames=80, bytes_out=6200)
+            self._create_aot_run(aot_sweep, "v4", "clean", 0, latency_p95=230, frames=18, bytes_out=7100)
+            self._create_aot_run(aot_sweep, "v0", "outage_5s", 0, latency_p95=15, frames=40, bytes_out=4000)
+            self._create_aot_run(aot_sweep, "v4", "outage_5s", 0, latency_p95=240, frames=10, bytes_out=5000)
+            self._create_demo_artifacts(demo_dir)
+
+            baseline_settings = {
+                "bandwidth_200kbps": {
+                    "v2": dict(latency_p95=260, stale_fraction=0.05, max_update_rate_per_s=30, frames=15, bytes_out=13500, effective_windows=[250, 250, 250], adaptation_reasons=["fixed_window"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_window", update_rates=[24, 30, 20], proxy_inter_frame_gap_stddev_ms=26.0, proxy_frame_rate_stddev_per_s=3.5),
+                    "v3": dict(latency_p95=252, stale_fraction=0.03, max_update_rate_per_s=28, frames=14, bytes_out=13350, effective_windows=[250, 350, 250], adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=60", "recover:healthy(queue_depth=1,send_duration_ms=12)"], increase_events=1, decrease_events=1, last_reason="recover:healthy(queue_depth=1,send_duration_ms=12)", update_rates=[23, 28, 19], proxy_inter_frame_gap_stddev_ms=22.0, proxy_frame_rate_stddev_per_s=2.8),
+                },
+                "loss_2pct": {
+                    "v2": dict(latency_p95=255, stale_fraction=0.03, max_update_rate_per_s=31, frames=15, bytes_out=13450, effective_windows=[250, 250, 250], adaptation_reasons=["fixed_window"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_window", update_rates=[25, 31, 21], proxy_inter_frame_gap_stddev_ms=24.0, proxy_frame_rate_stddev_per_s=3.2),
+                    "v3": dict(latency_p95=250, stale_fraction=0.025, max_update_rate_per_s=30, frames=14, bytes_out=13320, effective_windows=[250, 300, 250], adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=45", "recover:healthy(queue_depth=0,send_duration_ms=11)"], increase_events=1, decrease_events=1, last_reason="recover:healthy(queue_depth=0,send_duration_ms=11)", update_rates=[24, 30, 20], proxy_inter_frame_gap_stddev_ms=21.0, proxy_frame_rate_stddev_per_s=2.7),
+                },
+                "delay_50ms_jitter20ms": {
+                    "v2": dict(latency_p95=258, stale_fraction=0.025, max_update_rate_per_s=30, frames=14, bytes_out=13380, effective_windows=[250, 250, 250], adaptation_reasons=["fixed_window"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_window", update_rates=[24, 30, 22], proxy_inter_frame_gap_stddev_ms=23.0, proxy_frame_rate_stddev_per_s=3.0),
+                    "v3": dict(latency_p95=254, stale_fraction=0.02, max_update_rate_per_s=29, frames=13, bytes_out=13290, effective_windows=[250, 350, 300], adaptation_reasons=["healthy_streak=1", "degrade:send_duration_ms=50", "recover:healthy(queue_depth=2,send_duration_ms=15)"], increase_events=1, decrease_events=1, last_reason="recover:healthy(queue_depth=2,send_duration_ms=15)", update_rates=[24, 29, 21], proxy_inter_frame_gap_stddev_ms=20.0, proxy_frame_rate_stddev_per_s=2.6),
+                },
+            }
+            for scenario, variant_map in baseline_settings.items():
+                for trial_index, seed in enumerate((53701, 53702), start=1):
+                    for variant in ("v2", "v3"):
+                        self._create_adaptive_run(
+                            adaptive_sweep,
+                            variant=variant,
+                            scenario=scenario,
+                            condition_id=f"{variant}-qos0-{scenario}",
+                            trial_id=f"trial-{seed}",
+                            trial_index=trial_index,
+                            impairment_seed=seed,
+                            use_trial_layout=True,
+                            **variant_map[variant],
+                        )
+
+            parameter_settings = {
+                "bandwidth_200kbps": dict(latency_p95=292, stale_fraction=0.04, max_update_rate_per_s=27, frames=14, bytes_out=15100, effective_windows=[500, 500, 500], adaptation_reasons=["fixed_override"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_override", update_rates=[22, 27, 18], proxy_inter_frame_gap_stddev_ms=26.5, proxy_frame_rate_stddev_per_s=3.6),
+                "loss_2pct": dict(latency_p95=286, stale_fraction=0.035, max_update_rate_per_s=28, frames=14, bytes_out=14950, effective_windows=[500, 500, 500], adaptation_reasons=["fixed_override"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_override", update_rates=[23, 28, 19], proxy_inter_frame_gap_stddev_ms=24.5, proxy_frame_rate_stddev_per_s=3.4),
+                "delay_50ms_jitter20ms": dict(latency_p95=289, stale_fraction=0.03, max_update_rate_per_s=28, frames=13, bytes_out=14880, effective_windows=[500, 500, 500], adaptation_reasons=["fixed_override"] * 3, increase_events=0, decrease_events=0, last_reason="fixed_override", update_rates=[23, 28, 20], proxy_inter_frame_gap_stddev_ms=23.5, proxy_frame_rate_stddev_per_s=3.2),
+            }
+            for scenario, kwargs in parameter_settings.items():
+                for trial_index, seed in enumerate((53701, 53702), start=1):
+                    self._create_adaptive_run(
+                        parameter_sweep,
+                        variant="v3",
+                        scenario=scenario,
+                        condition_id=f"v3-qos0-{scenario}-cfgparam01",
+                        trial_id=f"trial-{seed}",
+                        trial_index=trial_index,
+                        impairment_seed=seed,
+                        use_trial_layout=True,
+                        adaptive_send_slow_ms=25,
+                        adaptive_step_up_ms=50,
+                        adaptive_max_batch_window_ms=500,
+                        **kwargs,
+                    )
+
+            report_dir = base_dir / "report"
+            with patch("experiments.build_report_assets.REPORT_DIR", report_dir):
+                manifest = build_report_assets(
+                    intel_sweep_dir=intel_sweep,
+                    aot_sweep_dir=aot_sweep,
+                    demo_dir=demo_dir,
+                    output_dir=output_dir,
+                    intel_adaptive_sweep_dir=adaptive_sweep,
+                    intel_adaptive_parameter_sweep_dir=parameter_sweep,
+                )
+
+            self.assertEqual(manifest["intel_adaptive_parameter_sweep_dir"], str(parameter_sweep))
+            self.assertTrue((output_dir / "tables" / "intel_v3_adaptive_parameter_sweep.csv").exists())
+            self.assertTrue((output_dir / "tables" / "intel_v3_adaptive_parameter_sweep.md").exists())
+            self.assertIn(
+                "report/assets/tables/intel_v3_adaptive_parameter_sweep.csv",
+                {Path(path).as_posix() for path in manifest["generated_tables"]},
+            )
+
+            inventory = json.loads((output_dir / "old_evidence_inventory.json").read_text(encoding="utf-8"))
+            parameter_entry = self._inventory_entry_by_path(
+                inventory,
+                "report/assets/tables/intel_v3_adaptive_parameter_sweep.csv",
+            )
+            self.assertEqual(
+                parameter_entry["source_sweep_ids"],
+                ["intel-v2-v3-adaptive-replicated-20260408", "intel-v3-adaptive-parameter-sweep-20260408"],
+            )
+
+            adaptive_table = (output_dir / "tables" / "intel_v2_vs_v3_adaptive_impairment.md").read_text(encoding="utf-8")
+            self.assertIn("| delay_50ms_jitter20ms | 2 | 2 |", adaptive_table)
+            parameter_table = (output_dir / "tables" / "intel_v3_adaptive_parameter_sweep.md").read_text(encoding="utf-8")
+            self.assertIn("| config_id | scenario | adaptive_send_slow_ms | adaptive_step_up_ms | adaptive_max_batch_window_ms |", parameter_table)
+            self.assertIn("| cfgparam01 | bandwidth_200kbps | 25 | 50 | 500 | 2 | 2 |", parameter_table)
+
+            key_claims = (output_dir / "tables" / "intel_key_claims.md").read_text(encoding="utf-8")
+            self.assertIn(
+                "Under the tested thresholds, adaptive control did not materially outperform fixed-window batching.",
+                key_claims,
+            )
+            guardrail_review = (output_dir / "tables" / "intel_claim_guardrail_review.md").read_text(encoding="utf-8")
+            self.assertIn("Do not headline adaptive control unless the bounded sweep shows real adjustment plus 2-of-3 guarded wins", guardrail_review)
+            self.assertIn(
+                "Under the tested thresholds, adaptive control did not materially outperform fixed-window batching.",
+                guardrail_review,
+            )
+            claim_map = (output_dir / "CLAIM_TO_EVIDENCE_MAP.md").read_text(encoding="utf-8")
+            self.assertIn("intel_v3_adaptive_parameter_sweep.md", claim_map)
+            final_report = (report_dir / "final_report.md").read_text(encoding="utf-8")
+            self.assertIn(
+                "Under the tested thresholds, adaptive control did not materially outperform fixed-window batching.",
+                final_report,
+            )
+            deliverable_gate = (report_dir / "deliverable_gate.md").read_text(encoding="utf-8")
+            self.assertIn("intel_v3_adaptive_parameter_sweep.csv", deliverable_gate)
+            self.assertIn("intel-v3-adaptive-parameter-sweep-20260408", deliverable_gate)
 
     def _create_intel_run(
         self,
@@ -554,6 +885,15 @@ class BuildReportAssetsTests(unittest.TestCase):
         )
         self._write_proxy_frame_log(run_dir / "proxy_frame_log.csv")
         self._write_timeseries(run_dir / "timeseries.csv")
+        self._write_run_manifest(
+            run_dir,
+            run_id=run_dir.name,
+            condition_id=run_dir.name,
+            trial_id="trial-1",
+            trial_index=1,
+            impairment_seed=1,
+            batch_window_ms=250 if variant != "v0" else 0,
+        )
 
     def _create_aot_run(
         self,
@@ -596,6 +936,15 @@ class BuildReportAssetsTests(unittest.TestCase):
             gateway_mode=variant,
         )
         self._write_timeseries(run_dir / "timeseries.csv")
+        self._write_run_manifest(
+            run_dir,
+            run_id=run_dir.name,
+            condition_id=run_dir.name,
+            trial_id="trial-1",
+            trial_index=1,
+            impairment_seed=1,
+            batch_window_ms=250 if variant == "v4" else 0,
+        )
 
     def _create_demo_artifacts(self, demo_dir: Path) -> None:
         (demo_dir / "baseline_dashboard").mkdir(parents=True, exist_ok=True)
@@ -642,6 +991,15 @@ class BuildReportAssetsTests(unittest.TestCase):
             "effective_batch_window_ms": batch_window_ms,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        self._write_run_manifest(
+            run_dir,
+            run_id=run_dir.name,
+            condition_id=run_dir.name,
+            trial_id="trial-1",
+            trial_index=1,
+            impairment_seed=1,
+            batch_window_ms=batch_window_ms,
+        )
 
     def _create_v1_v2_isolation_run(
         self,
@@ -674,6 +1032,15 @@ class BuildReportAssetsTests(unittest.TestCase):
             "effective_batch_window_ms": batch_window_ms,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        self._write_run_manifest(
+            run_dir,
+            run_id=run_dir.name,
+            condition_id=run_dir.name,
+            trial_id="trial-1",
+            trial_index=1,
+            impairment_seed=1,
+            batch_window_ms=batch_window_ms,
+        )
 
     def _create_adaptive_run(
         self,
@@ -692,11 +1059,28 @@ class BuildReportAssetsTests(unittest.TestCase):
         decrease_events: int,
         last_reason: str,
         update_rates: list[int],
+        proxy_inter_frame_gap_stddev_ms: float = 25.0,
+        proxy_frame_rate_stddev_per_s: float = 2.0,
+        condition_id: str | None = None,
+        trial_id: str | None = None,
+        trial_index: int | None = None,
+        impairment_seed: int = 1,
+        use_trial_layout: bool = False,
+        adaptive_send_slow_ms: int = 50,
+        adaptive_step_up_ms: int = 100,
+        adaptive_max_batch_window_ms: int = 500,
     ) -> None:
-        run_dir = sweep_dir / f"{variant}-qos0-{scenario}"
+        resolved_condition_id = condition_id or f"{variant}-qos0-{scenario}"
+        resolved_trial_id = trial_id or "trial-1"
+        run_dir = (
+            sweep_dir / resolved_condition_id / resolved_trial_id
+            if use_trial_layout
+            else sweep_dir / resolved_condition_id
+        )
         run_dir.mkdir(parents=True, exist_ok=True)
+        run_id = f"{resolved_condition_id}-{resolved_trial_id}" if use_trial_layout else run_dir.name
         summary = {
-            "run_id": run_dir.name,
+            "run_id": run_id,
             "variant": variant,
             "scenario": scenario,
             "mqtt_qos": 0,
@@ -711,6 +1095,8 @@ class BuildReportAssetsTests(unittest.TestCase):
             "max_update_rate_per_s": max_update_rate_per_s,
             "stale_fraction": stale_fraction,
             "effective_batch_window_ms": effective_windows[-1],
+            "proxy_inter_frame_gap_stddev_ms": proxy_inter_frame_gap_stddev_ms,
+            "proxy_frame_rate_stddev_per_s": proxy_frame_rate_stddev_per_s,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
         (run_dir / "gateway_metrics.json").write_text(
@@ -726,6 +1112,43 @@ class BuildReportAssetsTests(unittest.TestCase):
         )
         self._write_gateway_forward_log(run_dir / "gateway_forward_log.csv", effective_windows, adaptation_reasons)
         self._write_timeseries_with_update_rates(run_dir / "timeseries.csv", update_rates)
+        self._write_run_manifest(
+            run_dir,
+            run_id=run_id,
+            condition_id=resolved_condition_id,
+            trial_id=resolved_trial_id,
+            trial_index=trial_index if trial_index is not None else 1,
+            impairment_seed=impairment_seed,
+            batch_window_ms=250,
+            gateway_env={
+                "ADAPTIVE_SEND_SLOW_MS": adaptive_send_slow_ms,
+                "ADAPTIVE_STEP_UP_MS": adaptive_step_up_ms,
+                "ADAPTIVE_MAX_BATCH_WINDOW_MS": adaptive_max_batch_window_ms,
+            },
+        )
+
+    def _write_run_manifest(
+        self,
+        run_dir: Path,
+        *,
+        run_id: str,
+        condition_id: str,
+        trial_id: str,
+        trial_index: int,
+        impairment_seed: int,
+        batch_window_ms: int,
+        gateway_env: dict[str, object] | None = None,
+    ) -> None:
+        manifest = {
+            "run_id": run_id,
+            "condition_id": condition_id,
+            "trial_id": trial_id,
+            "trial_index": trial_index,
+            "impairment_seed": impairment_seed,
+            "batch_window_ms": batch_window_ms,
+            "effective_gateway_env": gateway_env or {},
+        }
+        (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     def _write_dashboard_measurements(
         self,
@@ -848,6 +1271,18 @@ class BuildReportAssetsTests(unittest.TestCase):
                         "1200",
                     ]
                 )
+
+    def _inventory_entry_by_path(self, inventory: dict[str, object], asset_path: str) -> dict[str, object]:
+        for entry in inventory["entries"]:
+            if entry["asset_path"] == asset_path:
+                return entry
+        raise AssertionError(f"Missing inventory entry for {asset_path}")
+
+    def _provenance_entry_by_path(self, entries: list[dict[str, object]], asset_path: str) -> dict[str, object]:
+        for entry in entries:
+            if entry["asset_path"] == asset_path:
+                return entry
+        raise AssertionError(f"Missing provenance entry for {asset_path}")
 
 
 if __name__ == "__main__":

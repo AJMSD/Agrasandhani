@@ -20,6 +20,7 @@ from experiments.build_report_assets import build_report_assets
 from experiments.plot_sweep import plot_sweep
 from experiments.run_demo import DemoConfig, run_demo, validate_environment as validate_demo_environment
 from experiments.run_sweep import SweepConfig, ensure_browser_capture_prerequisites, run_once
+from experiments.sweep_aggregation import write_condition_aggregates
 from simulator.preprocess_aot import normalize_aot
 from simulator.preprocess_intel_lab import normalize_intel_lab
 
@@ -54,7 +55,7 @@ def _run_sweep(config: SweepConfig) -> Path:
 
     sweep_dir = LOGS_ROOT / config.sweep_id
     if sweep_dir.exists():
-        shutil.rmtree(sweep_dir)
+        raise SystemExit(f"Sweep output root already exists and will not be overwritten: {sweep_dir}")
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
     for variant in config.variants:
@@ -62,6 +63,7 @@ def _run_sweep(config: SweepConfig) -> Path:
             for scenario in config.scenarios:
                 run_once(config, variant=variant, mqtt_qos=qos, scenario_name=scenario)
 
+    write_condition_aggregates(sweep_dir)
     plot_sweep(sweep_dir)
     return sweep_dir
 
