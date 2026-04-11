@@ -211,3 +211,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .dual-graph/
+
+# Local engineering context — never commit
+code-context.md
+context.md
