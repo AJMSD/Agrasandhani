@@ -2234,7 +2234,7 @@ def _plot_main_outage_frame_rate(rows: list[dict[str, object]], *, output_path: 
 
     axis.set_xlabel("Relative second from first proxy frame")
     axis.set_ylabel("Downstream frames per second")
-    axis.set_title("Downstream Frame Rate Over Time During Outage: V0 vs V2 vs V4")
+    axis.set_title("Downstream Frame Rate Over the outage_5s Condition: V0 vs V2 vs V4")
     axis.grid(True, axis="y", alpha=0.3)
     axis.legend(loc="best")
     figure.tight_layout()
@@ -2434,7 +2434,7 @@ def _describe_outage_freshness(rows: list[dict[str, object]]) -> str:
         f"On the Intel qos0 outage age trace, V0 rendered {v0_row['pre_outage_rendered_updates']} pre-outage updates "
         f"with pre-outage p95 age {v0_row['pre_outage_age_p95_ms']} ms, while V4 rendered {v4_row['pre_outage_rendered_updates']} "
         f"pre-outage updates with pre-outage p95 age {v4_row['pre_outage_age_p95_ms']} ms. "
-        f"During the five-second outage, rendered updates dropped to {v0_row['outage_rendered_updates']} for V0 and "
+        f"During the outage phase, browser display samples whose display time fell in the phase dropped to {v0_row['outage_rendered_updates']} for V0 and "
         f"{v4_row['outage_rendered_updates']} for V4. In recovery, V0 rendered {v0_row['recovery_rendered_updates']} updates "
         f"with recovery p95 age {v0_row['recovery_age_p95_ms']} ms, while V4 rendered {v4_row['recovery_rendered_updates']} "
         f"updates with recovery p95 age {v4_row['recovery_age_p95_ms']} ms. End-state staleCount/latestRowCount were "
@@ -2814,7 +2814,7 @@ def _write_final_report(
 
 ## Abstract
 
-Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while the adaptive V4 path reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching. The explicit Intel qos0 bandwidth comparison did not show a downstream payload-byte reduction versus V0; Section 7 therefore locks the fallback wording `{byte_claim_status.get('fallback_wording', BYTE_CLAIM_FALLBACK_WORDING)}`. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
+Agrasandhani explores a local MQTT-to-WebSocket sensor pipeline that can either forward every message directly or apply batching, compaction, adaptive-capable flushing, and last-known-good freshness semantics. The final evaluation uses a real Intel Berkeley Lab replay as the primary workload, a smaller AoT validation replay, and a captured live demo. Across the Intel clean qos0 run, the raw baseline reached a latency p95 of {clean_v0['latency_p95_ms']} ms while V4 reached {clean_v4['latency_p95_ms']} ms, reflecting the deliberate latency-for-stability tradeoff introduced by batching and retained state. The explicit Intel qos0 bandwidth comparison did not show a downstream payload-byte reduction versus V0; Section 7 therefore locks the fallback wording `{byte_claim_status.get('fallback_wording', BYTE_CLAIM_FALLBACK_WORDING)}`. Under the Intel outage qos1 run, V4 reduced downstream frame count from {outage_v0['proxy_downstream_frames_out']} to {outage_v4['proxy_downstream_frames_out']} over the full outage_5s condition while keeping stale rows visible through the outage window, which made the live comparison materially easier to interpret.
 
 ## 1. Introduction
 
@@ -2824,7 +2824,7 @@ The project goal is to make bursty IoT replay traffic easier to visualize withou
 
 The primary evidence run is `{intel_sweep_dir.name}`. It uses a bounded slice of the Intel Berkeley Lab deployment data [@intelLabData] preprocessed into Agrasandhani's normalized replay schema, then runs `V0`, `V2`, and `V4` across `clean`, `bandwidth_200kbps`, `loss_2pct`, `delay_50ms_jitter20ms`, and `outage_5s` at MQTT QoS `0` and `1`. Each run uses a 30 second wall-clock replay, a 5x speedup, a 200-sensor target, and burst mode. The portability check is `{aot_sweep_dir.name}`, built from a bounded slice of the AoT weekly archive dataset [@aotCyberGIS] with a smaller validation matrix. The live demo evidence comes from `{demo_dir.parent.name}`.
 
-For these evidence runs, impairments are injected primarily on the gateway-to-dashboard last hop using the impairment proxy, with optional host-level `tc netem` shaping in the same last-hop context. The reported downstream traffic metrics in this report are proxy-level outputs (`proxy_downstream_bytes_out`, `proxy_downstream_frames_out`).
+For these evidence runs, impairments are injected on the gateway-to-dashboard last hop using the application-layer impairment proxy. Optional host-level shaping exists in the repository, but the reported downstream traffic metrics in this report are proxy-level outputs (`proxy_downstream_bytes_out`, `proxy_downstream_frames_out`).
 
 ### 2.1 Latency metrics
 

@@ -87,7 +87,7 @@
     "research_paper/Sections/introduction.tex",
     "research_paper/Sections/related-work.tex",
     "research_paper/Sections/TeamInfo.tex",
-    "research_paper/Sections/approach-cs537.png",
+    "research_paper/assets/approach-cs537.png",
     "research_paper/tables/paper_assets_manifest.json",
     "research_paper/tables/paper_asset_index.md",
     "research_paper/tables/intel_main_summary_table.tex",
@@ -213,13 +213,13 @@
       "research_paper/Sections/introduction.tex",
       "research_paper/Sections/related-work.tex",
       "research_paper/Sections/TeamInfo.tex",
-      "research_paper/Sections/approach-cs537.png"
+      "research_paper/assets/approach-cs537.png"
     ],
     "paper_asset_files": [
       "research_paper/tables/paper_assets_manifest.json",
       "research_paper/tables/paper_asset_index.md",
       "research_paper/tables/intel_main_summary_table.tex",
-      "research_paper/Sections/approach-cs537.png",
+      "research_paper/assets/approach-cs537.png",
       "research_paper/figures/intel_clean_qos0_latency_cdf.png",
       "research_paper/figures/intel_outage_qos0_v0_vs_v4_age_over_time.png",
       "research_paper/figures/main_outage_frame_rate.png",

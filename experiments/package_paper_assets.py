@@ -244,10 +244,10 @@ REPORT_ASSET_SPECS: list[dict[str, str]] = [
 
 PAPER_NATIVE_ASSET_SPECS: list[dict[str, str]] = [
     {
-        "paper_asset_path": "research_paper/Sections/approach-cs537.png",
+        "paper_asset_path": "research_paper/assets/approach-cs537.png",
         "paper_asset_kind": "figure",
         "role": "main",
-        "proves": "System architecture showing the replay to MQTT broker to smart gateway to WebSocket dashboard path.",
+        "proves": "System architecture showing the measured replay to MQTT broker to smart gateway to impairment proxy to WebSocket dashboard path.",
         "placement_reason": "Needed for main-paper orientation, but intentionally kept paper-native rather than report-derived.",
     }
 ]

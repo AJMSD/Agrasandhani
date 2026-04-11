@@ -215,3 +215,4 @@ __marimo__/
 # Local engineering context — never commit
 code-context.md
 context.md
+.codex-task-*.md
