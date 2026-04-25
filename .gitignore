@@ -228,6 +228,13 @@ research_paper/*.bbl
 research_paper/*.blg
 research_paper/*.out
 
+# Local paper-packaging outputs. Existing tracked assets remain tracked.
+research_paper/assets/*.csv
+research_paper/assets/*.json
+research_paper/assets/*.md
+research_paper/assets/*.tex
+research_paper/assets/*.png
+
 # Local scratch/output directories
 .codex_tmp_pdf_review/
 experiments/output/

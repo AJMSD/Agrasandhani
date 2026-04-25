@@ -2897,7 +2897,7 @@ The final evidence supports a narrow conclusion. Agrasandhani's smart path is us
 
 ## 5. Reproducibility and Deliverables
 
-All committed report assets under `report/assets/` are regenerated from ignored local logs via `experiments/build_report_assets.py`, and the exact local run commands are captured in `experiments/logs/final-deliverables-*/manifest.json`. The reproducibility steps live in [report/reproducibility.md](reproducibility.md), the related-work notes live in [report/related_work_notes.md](related_work_notes.md), and the deliverable cross-check is in [report/deliverable_gate.md](deliverable_gate.md).
+Report assets under `report/assets/` are regenerated from ignored local logs via `experiments/build_report_assets.py`, and the exact local run commands are captured in `experiments/logs/final-deliverables-*/manifest.json`. The remote setup and rerun instructions live in the root README; generated report notes may also be kept locally under `report/`.
 
 ## References
 
@@ -2951,8 +2951,8 @@ def _write_deliverable_gate(
 
 ## M1-M3 System Path
 
-- Replay simulator and preprocessors: [simulator/replay_mqtt.py](../simulator/replay_mqtt.py), [simulator/preprocess_intel_lab.py](../simulator/preprocess_intel_lab.py), [simulator/preprocess_aot.py](../simulator/preprocess_aot.py)
-- Gateway and dashboard path: [gateway/server.py](../gateway/server.py), [ui/dashboard.html](../ui/dashboard.html)
+- Replay simulator and preprocessors: [simulator/replay_publisher.py](../simulator/replay_publisher.py), [simulator/preprocess_intel_lab.py](../simulator/preprocess_intel_lab.py), [simulator/preprocess_aot.py](../simulator/preprocess_aot.py)
+- Gateway and dashboard path: [gateway/app.py](../gateway/app.py), [ui/index.html](../ui/index.html)
 - Impairment and experiment harnesses: [experiments/impairment_proxy.py](../experiments/impairment_proxy.py), [experiments/run_sweep.py](../experiments/run_sweep.py), [experiments/run_demo.py](../experiments/run_demo.py)
 
 ## M4 Evidence Path
@@ -2968,9 +2968,8 @@ def _write_deliverable_gate(
 
 - Final runner: [experiments/run_final_deliverables.py](../experiments/run_final_deliverables.py)
 - Report asset builder: [experiments/build_report_assets.py](../experiments/build_report_assets.py)
-- Reproducibility instructions: [report/reproducibility.md](reproducibility.md)
-- Related-work notes: [report/related_work_notes.md](related_work_notes.md)
-- Final report draft: [report/final_report.md](final_report.md)
+- Remote reproducibility instructions: [README.md](../README.md)
+- Local generated report draft: [report/final_report.md](final_report.md)
 - Bibliography: [report/references.bib](references.bib)
 
 ## Test Coverage

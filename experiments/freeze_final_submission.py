@@ -16,7 +16,6 @@ REPORT_DIR = PROJECT_ROOT / "report"
 REPORT_ASSETS_DIR = REPORT_DIR / "assets"
 PAPER_DIR = PROJECT_ROOT / "research_paper"
 LOGS_DIR = PROJECT_ROOT / "experiments" / "logs"
-README_REPRO_PATH = PROJECT_ROOT / "README_reproducibility.md"
 MANIFEST_OUTPUT_PATH = REPORT_ASSETS_DIR / "final_submission_manifest.json"
 DELIVERABLE_GATE_PATH = REPORT_DIR / "deliverable_gate.md"
 
@@ -51,12 +50,7 @@ CORE_SUBMISSION_FILES = [
 ]
 
 DOCUMENTATION_FILES = [
-    "README_reproducibility.md",
-    "report/final_report.md",
-    "report/reproducibility.md",
-    "report/experiment_pipeline_audit.md",
-    "report/metric_definitions.md",
-    "report/deliverable_gate.md",
+    "README.md",
     "experiments/logs/run_registry.json",
 ]
 
@@ -108,9 +102,7 @@ def _existing_repo_files(project_root: Path, relative_paths: list[str]) -> list[
 
 
 def _existing_sections(paper_dir: Path, project_root: Path) -> list[str]:
-    section_paths = sorted((paper_dir / "Sections").glob("*.tex"))
-    section_paths.extend(sorted((paper_dir / "Sections").glob("*.png")))
-    return [_project_relative(path, project_root) for path in section_paths if path.is_file()]
+    return []
 
 
 def _paper_manifest_files(
@@ -119,7 +111,7 @@ def _paper_manifest_files(
     project_root: Path,
 ) -> list[str]:
     paths = [
-        "research_paper/tables/paper_assets_manifest.json",
+        "research_paper/assets/paper_assets_manifest.json",
         paper_manifest.get("paper_asset_index_path"),
         paper_manifest.get("generated_latex_table"),
         *paper_manifest.get("main_paper_assets", []),
@@ -160,7 +152,7 @@ def _collect_submission_files(
     manifest_output_path: Path,
 ) -> dict[str, list[str]]:
     evidence_manifest = _read_json(report_dir / "assets" / "evidence_manifest.json")
-    paper_manifest = _read_json(paper_dir / "tables" / "paper_assets_manifest.json")
+    paper_manifest = _read_json(paper_dir / "assets" / "paper_assets_manifest.json")
 
     groups = {
         "core_pipeline_files": _existing_repo_files(project_root, CORE_SUBMISSION_FILES),
@@ -249,7 +241,7 @@ def _run_command(command: list[str], *, cwd: Path, name: str) -> dict[str, Any]:
 
 
 def _check_tex_paths(paper_dir: Path) -> dict[str, Any]:
-    tex_files = [paper_dir / "main.tex", *sorted((paper_dir / "Sections").glob("*.tex"))]
+    tex_files = [paper_dir / "main.tex"]
     missing: list[dict[str, str]] = []
     patterns = [
         re.compile(r"\\input\{([^}]+)\}"),
@@ -289,7 +281,7 @@ def _check_citations(paper_dir: Path) -> dict[str, Any]:
             (paper_dir / "references.bib").read_text(encoding="utf-8"),
         )
     )
-    tex_files = [paper_dir / "main.tex", *sorted((paper_dir / "Sections").glob("*.tex"))]
+    tex_files = [paper_dir / "main.tex"]
     used_keys: set[str] = set()
     for tex_file in tex_files:
         text = tex_file.read_text(encoding="utf-8")
@@ -332,7 +324,7 @@ def _check_paper_assets(project_root: Path, expected_paper_files: list[str]) -> 
         if path.is_file() and path.suffix in {".png", ".tex", ".md", ".json", ".csv", ".bib"}
     }
     expected = set(expected_paper_files)
-    extra = sorted(path for path in actual - expected if path.startswith("research_paper/figures/") or path.startswith("research_paper/tables/"))
+    extra = sorted(path for path in actual - expected if path.startswith("research_paper/assets/"))
     missing = sorted(expected - actual)
     return {
         "name": "paper_asset_inventory",
@@ -350,17 +342,10 @@ def _check_doc_anchors(
     canonical_roots: list[dict[str, str]],
 ) -> dict[str, Any]:
     checks = {
-        "report/reproducibility.md": [
+        "README.md": [
             "report/assets/evidence_manifest.json",
             "experiments/logs/run_registry.json",
-            "research_paper/tables/paper_assets_manifest.json",
             *[entry["path"] for entry in canonical_roots],
-        ],
-        "README_reproducibility.md": [entry["path"] for entry in canonical_roots],
-        "report/final_report.md": [
-            Path(evidence_manifest["intel_sweep_dir"]).name,
-            Path(evidence_manifest["aot_sweep_dir"]).name,
-            Path(evidence_manifest["demo_dir"]).parts[-2],
         ],
     }
     missing: list[dict[str, Any]] = []
@@ -402,7 +387,7 @@ def _draft_manual_signoff() -> dict[str, Any]:
         "recommended_points": [
             "Broad downstream-byte reduction remains unsupported; keep the fallback wording from report/assets/tables/intel_key_claims.md.",
             "Adaptive control remains a null-result/supporting claim, not a headline result.",
-            "Keep the current main-paper asset slate recorded in research_paper/tables/paper_asset_index.md.",
+            "Keep the current main-paper asset slate recorded in research_paper/assets/paper_asset_index.md.",
             "No extra reruns are recommended before freeze because the bounded Section 7 hard stop is already locked.",
         ],
     }
@@ -453,7 +438,7 @@ def _build_manifest(
         "source_manifests": {
             "report_evidence_manifest_path": "report/assets/evidence_manifest.json",
             "report_claim_map_path": "report/assets/CLAIM_TO_EVIDENCE_MAP.md",
-            "paper_asset_manifest_path": "research_paper/tables/paper_assets_manifest.json",
+            "paper_asset_manifest_path": "research_paper/assets/paper_assets_manifest.json",
             "run_registry_path": "experiments/logs/run_registry.json",
         },
         "expected_provenance_anchors": {
