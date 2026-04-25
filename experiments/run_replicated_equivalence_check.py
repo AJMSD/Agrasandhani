@@ -270,8 +270,10 @@ def _compare_exact_fields(
         for field in exact_fields:
             if field not in baseline_row and field not in new_row:
                 continue
-            if field not in baseline_row or field not in new_row:
-                blocking_findings.append(f"{scope} {row_id} field {field} presence changed")
+            if field not in baseline_row:
+                continue
+            if field not in new_row:
+                blocking_findings.append(f"{scope} {row_id} field {field} is missing")
                 continue
             if not _values_equal(baseline_row[field], new_row[field]):
                 blocking_findings.append(
