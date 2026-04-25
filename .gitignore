@@ -216,3 +216,20 @@ __marimo__/
 code-context.md
 context.md
 .codex-task-*.md
+
+# Local markdown notes and generated markdown outputs. Keep only the root
+# repository README as tracked documentation.
+*.md
+!/README.md
+
+# Local LaTeX build outputs
+research_paper/*.aux
+research_paper/*.bbl
+research_paper/*.blg
+research_paper/*.out
+
+# Local scratch/output directories
+.codex_tmp_pdf_review/
+experiments/output/
+experiments/generate_architecture_figure.py
+research_paper_archive/
