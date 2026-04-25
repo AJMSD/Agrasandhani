@@ -8,6 +8,11 @@ import shutil
 from pathlib import Path
 from statistics import mean
 
+if __package__ in {None, ""}:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import matplotlib
 
 matplotlib.use("Agg")
