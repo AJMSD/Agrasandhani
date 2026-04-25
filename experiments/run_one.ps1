@@ -160,4 +160,4 @@ if (-not $gatewayProcess.HasExited) {
     Stop-Process -Id $gatewayProcess.Id -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Run complete. Artifacts saved to $runDir"
+Write-Host "Run complete. Outputs saved to $runDir"

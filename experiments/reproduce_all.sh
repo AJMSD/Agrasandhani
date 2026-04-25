@@ -150,6 +150,5 @@ python "$ROOT_DIR/experiments/package_paper_assets.py" \
 
 echo "Reproducibility pipeline complete."
 echo "Report assets: $ROOT_DIR/report/assets"
-echo "Paper figures: $ROOT_DIR/research_paper/figures"
-echo "Paper tables: $ROOT_DIR/research_paper/tables"
+echo "Paper assets: $ROOT_DIR/research_paper/assets"
 echo "Claim map: $ROOT_DIR/report/assets/CLAIM_TO_EVIDENCE_MAP.md"

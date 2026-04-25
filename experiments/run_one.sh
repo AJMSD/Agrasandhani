@@ -125,4 +125,4 @@ with open(output_path, "w", encoding="utf-8") as output_file:
     json.dump(payload, output_file, indent=2)
 PY
 
-echo "Run complete. Artifacts saved to ${RUN_DIR}"
+echo "Run complete. Outputs saved to ${RUN_DIR}"

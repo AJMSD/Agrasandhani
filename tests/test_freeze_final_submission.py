@@ -93,17 +93,13 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
         report_figures_dir = report_assets_dir / "figures"
         report_tables_dir = report_assets_dir / "tables"
         paper_dir = repo_root / "research_paper"
-        paper_figures_dir = paper_dir / "figures"
-        paper_tables_dir = paper_dir / "tables"
-        sections_dir = paper_dir / "Sections"
+        paper_assets_dir = paper_dir / "assets"
         logs_dir = repo_root / "experiments" / "logs"
 
         for directory in (
             report_figures_dir,
             report_tables_dir,
-            paper_figures_dir,
-            paper_tables_dir,
-            sections_dir,
+            paper_assets_dir,
             logs_dir,
             repo_root / "gateway",
             repo_root / "ui",
@@ -113,9 +109,15 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
-        self._write(repo_root / "gateway" / "server.py", "print('gateway')\n")
-        self._write(repo_root / "ui" / "dashboard.html", "<html></html>\n")
-        self._write(repo_root / "simulator" / "replay_mqtt.py", "print('replay')\n")
+        self._write(repo_root / "gateway" / "app.py", "print('gateway')\n")
+        self._write(repo_root / "gateway" / "forwarder.py", "print('forwarder')\n")
+        self._write(repo_root / "gateway" / "mqtt_ingest.py", "print('mqtt')\n")
+        self._write(repo_root / "gateway" / "schemas.py", "print('schemas')\n")
+        self._write(repo_root / "ui" / "index.html", "<html></html>\n")
+        self._write(repo_root / "ui" / "demo_compare.html", "<html></html>\n")
+        self._write(repo_root / "simulator" / "preprocess_common.py", "print('common')\n")
+        self._write(repo_root / "simulator" / "replay_publisher.py", "print('replay')\n")
+        self._write(repo_root / "simulator" / "replay_timing.py", "print('timing')\n")
         self._write(repo_root / "simulator" / "preprocess_intel_lab.py", "print('intel')\n")
         self._write(repo_root / "simulator" / "preprocess_aot.py", "print('aot')\n")
         self._write(repo_root / "experiments" / "analyze_run.py", "print('analyze')\n")
@@ -136,7 +138,7 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
         self._write(repo_root / "experiments" / "capture_dashboard.mjs", "console.log('ok');\n")
         self._write(repo_root / "tests" / "test_example.py", "print('test')\n")
 
-        self._write(repo_root / "README_reproducibility.md", "")
+        self._write(repo_root / "README.md", "")
         self._write(report_dir / "final_report.md", "")
         self._write(report_dir / "reproducibility.md", "")
         self._write(report_dir / "experiment_pipeline_audit.md", "pipeline audit\n")
@@ -175,14 +177,13 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
         if include_unmanaged_report_asset:
             self._write(report_figures_dir / "file.png", "extra\n")
 
-        self._write(sections_dir / "introduction.tex", "Intro with citation \\cite{mqtt311}.\n")
-        self._write(sections_dir / "approach-cs537.png", "png\n")
+        self._write(paper_assets_dir / "approach-cs537.png", "png\n")
         self._write(
             paper_dir / "main.tex",
             "\\documentclass{article}\n"
             "\\begin{document}\n"
-            "\\input{Sections/introduction}\n"
-            "\\includegraphics{Sections/approach-cs537.png}\n"
+            "Intro with citation \\cite{mqtt311}.\n"
+            "\\includegraphics{assets/approach-cs537.png}\n"
             "\\bibliography{references}\n"
             "\\end{document}\n",
         )
@@ -190,24 +191,24 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
             paper_dir / "references.bib",
             "@misc{mqtt311,\n  title = {MQTT}\n}\n",
         )
-        self._write(paper_figures_dir / "main_outage_frame_rate.png", "png\n")
-        self._write(paper_tables_dir / "intel_main_summary_table.tex", "\\begin{tabular}{}\\end{tabular}\n")
-        self._write(paper_tables_dir / "paper_asset_index.md", "asset index\n")
+        self._write(paper_assets_dir / "main_outage_frame_rate.png", "png\n")
+        self._write(paper_assets_dir / "intel_main_summary_table.tex", "\\begin{tabular}{}\\end{tabular}\n")
+        self._write(paper_assets_dir / "paper_asset_index.md", "asset index\n")
         paper_assets_manifest = {
             "main_paper_assets": [
-                "research_paper/figures/main_outage_frame_rate.png",
+                "research_paper/assets/main_outage_frame_rate.png",
             ],
             "appendix_assets": [],
-            "generated_latex_table": "research_paper/tables/intel_main_summary_table.tex",
-            "paper_asset_index_path": "research_paper/tables/paper_asset_index.md",
+            "generated_latex_table": "research_paper/assets/intel_main_summary_table.tex",
+            "paper_asset_index_path": "research_paper/assets/paper_asset_index.md",
             "paper_native_assets": [
                 {
-                    "paper_asset_path": "research_paper/Sections/approach-cs537.png",
+                    "paper_asset_path": "research_paper/assets/approach-cs537.png",
                 }
             ],
         }
         self._write(
-            paper_tables_dir / "paper_assets_manifest.json",
+            paper_assets_dir / "paper_assets_manifest.json",
             json.dumps(paper_assets_manifest, indent=2),
         )
 
@@ -232,12 +233,11 @@ class FreezeFinalSubmissionTests(unittest.TestCase):
         reproducibility_content = (
             "report/assets/evidence_manifest.json\n"
             "experiments/logs/run_registry.json\n"
-            "research_paper/tables/paper_assets_manifest.json\n"
             "experiments/logs/final-intel-primary-replicated-20260408-135251\n"
             "experiments/logs/final-aot-validation-replicated-20260408-135251\n"
             "experiments/logs/final-demo-20260403\n"
         )
-        self._write(repo_root / "README_reproducibility.md", reproducibility_content)
+        self._write(repo_root / "README.md", reproducibility_content)
         self._write(report_dir / "reproducibility.md", reproducibility_content)
         self._write(
             report_dir / "final_report.md",

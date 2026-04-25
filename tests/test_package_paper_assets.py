@@ -54,8 +54,8 @@ class PackagePaperAssetsTests(unittest.TestCase):
             tables_dir = report_assets_dir / "tables"
             figures_dir.mkdir(parents=True, exist_ok=True)
             tables_dir.mkdir(parents=True, exist_ok=True)
-            (paper_dir / "Sections").mkdir(parents=True, exist_ok=True)
-            (paper_dir / "Sections" / "approach-cs537.png").write_bytes(b"architecture")
+            (paper_dir / "assets").mkdir(parents=True, exist_ok=True)
+            (paper_dir / "assets" / "approach-cs537.png").write_bytes(b"architecture")
 
             for filename in EXPECTED_FIGURES:
                 (figures_dir / filename).write_bytes(b"png")
@@ -72,22 +72,22 @@ class PackagePaperAssetsTests(unittest.TestCase):
             claim_map_path = report_assets_dir / "CLAIM_TO_EVIDENCE_MAP.md"
             claim_map_path.write_text("sentinel claim map\n", encoding="utf-8")
 
-            stale_figure = paper_dir / "figures" / "obsolete_legacy.png"
+            stale_figure = paper_dir / "assets" / "obsolete_legacy.png"
             stale_figure.parent.mkdir(parents=True, exist_ok=True)
             stale_figure.write_bytes(b"old")
-            stale_table = paper_dir / "tables" / "intel_main_summary_table.md"
+            stale_table = paper_dir / "assets" / "intel_main_summary_table.md"
             stale_table.parent.mkdir(parents=True, exist_ok=True)
             stale_table.write_text("old main summary\n", encoding="utf-8")
             previous_manifest = {
                 "schema_version": 2,
                 "packaged_assets": [
-                    {"paper_asset_path": "research_paper/figures/obsolete_legacy.png"},
-                    {"paper_asset_path": "research_paper/tables/intel_main_summary_table.md"},
+                    {"paper_asset_path": "research_paper/assets/obsolete_legacy.png"},
+                    {"paper_asset_path": "research_paper/assets/intel_main_summary_table.md"},
                 ],
-                "generated_latex_table": "research_paper/tables/intel_main_summary_table.tex",
-                "paper_asset_index_path": "research_paper/tables/paper_asset_index.md",
+                "generated_latex_table": "research_paper/assets/intel_main_summary_table.tex",
+                "paper_asset_index_path": "research_paper/assets/paper_asset_index.md",
             }
-            (paper_dir / "tables" / "paper_assets_manifest.json").write_text(
+            (paper_dir / "assets" / "paper_assets_manifest.json").write_text(
                 json.dumps(previous_manifest, indent=2),
                 encoding="utf-8",
             )
@@ -124,31 +124,31 @@ class PackagePaperAssetsTests(unittest.TestCase):
             self.assertEqual(manifest["copied_tables"], EXPECTED_TABLES)
             self.assertEqual(
                 manifest["generated_latex_table"],
-                "research_paper/tables/intel_main_summary_table.tex",
+                "research_paper/assets/intel_main_summary_table.tex",
             )
             self.assertEqual(
                 manifest["paper_asset_index_path"],
-                "research_paper/tables/paper_asset_index.md",
+                "research_paper/assets/paper_asset_index.md",
             )
             self.assertEqual(claim_map_path.read_text(encoding="utf-8"), "sentinel claim map\n")
 
             self.assertFalse(stale_figure.exists())
             self.assertFalse(stale_table.exists())
 
-            self.assertTrue((paper_dir / "tables" / "paper_assets_manifest.json").exists())
-            self.assertTrue((paper_dir / "tables" / "paper_asset_index.md").exists())
-            self.assertTrue((paper_dir / "tables" / "intel_main_summary_table.tex").exists())
-            self.assertFalse((paper_dir / "tables" / "intel_main_summary_table.md").exists())
-            self.assertTrue((paper_dir / "figures" / "main_outage_frame_rate.png").exists())
-            self.assertTrue((paper_dir / "figures" / "intel_delay_qos0_inter_frame_gap_cdf.png").exists())
-            self.assertTrue((paper_dir / "tables" / "intel_v3_adaptive_parameter_sweep.md").exists())
+            self.assertTrue((paper_dir / "assets" / "paper_assets_manifest.json").exists())
+            self.assertTrue((paper_dir / "assets" / "paper_asset_index.md").exists())
+            self.assertTrue((paper_dir / "assets" / "intel_main_summary_table.tex").exists())
+            self.assertFalse((paper_dir / "assets" / "intel_main_summary_table.md").exists())
+            self.assertTrue((paper_dir / "assets" / "main_outage_frame_rate.png").exists())
+            self.assertTrue((paper_dir / "assets" / "intel_delay_qos0_inter_frame_gap_cdf.png").exists())
+            self.assertTrue((paper_dir / "assets" / "intel_v3_adaptive_parameter_sweep.md").exists())
 
             self.assertEqual(len(manifest["packaged_assets"]), len(EXPECTED_FIGURES) + len(EXPECTED_TABLES) + 1)
             self.assertEqual(len(manifest["paper_native_assets"]), 1)
 
             latex_entry = self._paper_entry_by_path(
                 manifest["packaged_assets"],
-                "research_paper/tables/intel_main_summary_table.tex",
+                "research_paper/assets/intel_main_summary_table.tex",
             )
             self.assertEqual(latex_entry["role"], "main")
             self.assertIn("Main-paper LaTeX table", latex_entry["proves"])
@@ -167,7 +167,7 @@ class PackagePaperAssetsTests(unittest.TestCase):
 
             main_figure_entry = self._paper_entry_by_path(
                 manifest["packaged_assets"],
-                "research_paper/figures/main_outage_frame_rate.png",
+                "research_paper/assets/main_outage_frame_rate.png",
             )
             self.assertEqual(main_figure_entry["paper_asset_kind"], "figure")
             self.assertEqual(main_figure_entry["role"], "main")
@@ -175,7 +175,7 @@ class PackagePaperAssetsTests(unittest.TestCase):
 
             appendix_entry = self._paper_entry_by_path(
                 manifest["packaged_assets"],
-                "research_paper/tables/intel_claim_guardrail_review.md",
+                "research_paper/assets/intel_claim_guardrail_review.md",
             )
             self.assertEqual(appendix_entry["role"], "appendix")
             self.assertIn("guardrail", appendix_entry["proves"].lower())
@@ -187,15 +187,15 @@ class PackagePaperAssetsTests(unittest.TestCase):
                 self.assertTrue(entry["placement_reason"])
 
             paper_native_entry = manifest["paper_native_assets"][0]
-            self.assertEqual(paper_native_entry["paper_asset_path"], "research_paper/Sections/approach-cs537.png")
+            self.assertEqual(paper_native_entry["paper_asset_path"], "research_paper/assets/approach-cs537.png")
             self.assertEqual(paper_native_entry["role"], "main")
             self.assertEqual(paper_native_entry["asset_origin"], "paper-native")
 
-            asset_index = (paper_dir / "tables" / "paper_asset_index.md").read_text(encoding="utf-8")
+            asset_index = (paper_dir / "assets" / "paper_asset_index.md").read_text(encoding="utf-8")
             self.assertIn("## Main Paper Assets", asset_index)
             self.assertIn("## Appendix-Ready Supporting Assets", asset_index)
-            self.assertIn("research_paper/Sections/approach-cs537.png", asset_index)
-            self.assertIn("research_paper/tables/intel_claim_guardrail_review.md", asset_index)
+            self.assertIn("research_paper/assets/approach-cs537.png", asset_index)
+            self.assertIn("research_paper/assets/intel_claim_guardrail_review.md", asset_index)
 
     def _report_entry(self, *, asset_path: str, asset_kind: str) -> dict[str, object]:
         return {

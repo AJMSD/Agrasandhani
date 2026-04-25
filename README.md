@@ -85,7 +85,7 @@ WebSocket outputs depend on `GATEWAY_MODE`:
 
 ## Real Dataset Preprocessing
 
-The repo now includes reproducible preprocessors for the two real replay sources in the PRD. Raw source archives stay local; only small normalized outputs are checked in under `simulator/datasets/`.
+The repo includes reproducible preprocessors for the two real replay sources used in the evaluation. Raw source archives stay local; only small normalized outputs are checked in under `simulator/datasets/`.
 
 ### Array of Things (AoT)
 
@@ -462,7 +462,7 @@ export BURST_SPEED_MULTIPLIER=5
 ./experiments/run_one.sh
 ```
 
-Artifacts are written to `experiments/logs/<RUN_ID>/`:
+Outputs are written to `experiments/logs/<RUN_ID>/`:
 
 - `gateway_forward_log.csv`: per-message timing log with frame window and adaptation decision columns
 - `gateway.stdout.log` and `gateway.stderr.log`
@@ -482,7 +482,7 @@ Default scenario files:
 - `delay_50ms_jitter20ms`
 - `outage_5s`
 
-Run the default minimal matrix from the PRD:
+Run the default minimal matrix:
 
 ```powershell
 python .\experiments\run_sweep.py --burst-enabled
@@ -545,11 +545,16 @@ Analysis notes:
 - use `matching_mode` and `missing_update_count_exact` in the summary to distinguish exact vs legacy analysis
 - use `proxy_frame_alignment_mode` to tell whether missing-update cause attribution was derived from exact gateway/proxy frame alignment or skipped as unavailable
 - `missing_updates_outage_drop_count`, `missing_updates_non_outage_drop_count`, `missing_updates_delivered_frame_count`, and `missing_updates_unclassified_count` break missing updates down by proxy-frame outcome when alignment is available
-- `PRD.md` and `PROJECT_CHECKLIST.md` are local planning artifacts and should not be staged or pushed with code changes
-
 Sweep-level plots are written to `experiments/logs/<SWEEP_ID>/plots/`.
 
-The Linux-only `tc netem` cross-check helpers live under `experiments/netem/`.
+Optional Linux-only `tc netem` cross-checks are available through `experiments/netem/apply_netem.sh`. They are not required for the default Windows/macOS workflow:
+
+```bash
+chmod +x ./experiments/netem/apply_netem.sh
+./experiments/netem/apply_netem.sh eth0 clean
+./experiments/netem/apply_netem.sh eth0 delay_50ms_jitter20ms
+sudo tc qdisc del dev eth0 root
+```
 
 ## M5 Demo
 
@@ -562,7 +567,7 @@ Default demo behavior:
 - ports: baseline gateway `8000`, smart gateway `8001`, baseline proxy `9000`, smart proxy `9001`
 - compare page: served from the baseline proxy at `/ui/demo_compare.html`
 - default behavior remains fail-fast if those demo ports are already occupied
-- browser artifact capture is off by default and only runs when explicitly requested
+- browser output capture is off by default and only runs when explicitly requested
 
 One-command launch:
 
@@ -598,7 +603,7 @@ python ./experiments/run_demo.py --run-id m5-demo-smoke --no-open-browser
 Optional additive flags:
 
 - `--auto-ports`: if one of the default demo ports is busy, reassign only the conflicting services to free ports and record the effective ports in `manifest.json`
-- `--capture-artifacts`: capture baseline and smart dashboard CSV/summary/screenshot artifacts plus a final `demo_compare.png` screenshot
+- `--capture-artifacts`: capture baseline and smart dashboard CSV, summaries, screenshots, plus a final `demo_compare.png` screenshot
 
 Examples:
 
@@ -624,7 +629,7 @@ Expected live differences:
 - during the outage phase both sides stop receiving frames, but `v4` keeps the last-known-good rows visible and marks them stale once the TTL expires
 - after recovery the `v4` side should settle back into a cleaner cadence more quickly than the raw baseline feed
 
-Artifacts are written to `experiments/logs/<RUN_ID>/demo/`:
+Outputs are written to `experiments/logs/<RUN_ID>/demo/`:
 
 - `baseline_gateway.stdout.log`, `baseline_gateway.stderr.log`
 - `smart_gateway.stdout.log`, `smart_gateway.stderr.log`
@@ -647,15 +652,9 @@ When `--capture-artifacts` is enabled, the same demo directory also includes:
 - `smart_dashboard/dashboard.png`
 - `demo_compare.png`
 
-## Final Deliverables
+## Reproducibility
 
-The tracked M5 deliverables now live under `report/`:
-
-- `report/README.md`: final deliverables index
-- `report/reproducibility.md`: end-to-end rerun instructions for preprocessing, sweeps, demo capture, and report asset regeneration
-- `report/related_work_notes.md`: scholarly framing notes for MQTT QoS, pub/sub positioning, and SENSELET++ inspiration
-- `report/references.bib`: report bibliography
-- `report/assets/`: tracked figures, tables, and the evidence manifest generated from local final runs
+The main reproducibility paths are kept here so the remote repository has a single documentation entrypoint. Experiment logs remain local under `experiments/logs/`; only compact derived evidence assets and the paper package are intended for version control.
 
 End-to-end runner:
 
@@ -672,6 +671,57 @@ export AOT_INPUT=/path/to/chicago-complete.weekly.2019-09-30-to-2019-10-06.tar
 ```
 
 This runner preprocesses the raw datasets into ignored replay CSVs under `experiments/logs/generated_inputs/`, executes the Intel primary sweep plus the AoT validation sweep, captures the final M5 demo, and regenerates the tracked report assets. The large logs remain local-only under `experiments/logs/`; only the derived report package is intended to be committed.
+
+Regenerate plots, tables, run registry, and paper assets from existing frozen evidence:
+
+```powershell
+bash ./experiments/reproduce_all.sh --mode from-existing
+```
+
+If bash is unavailable on Windows, run the equivalent Python steps:
+
+```powershell
+python .\experiments\build_report_assets.py `
+  --intel-sweep-dir .\experiments\logs\final-intel-primary-replicated-20260408-135251 `
+  --aot-sweep-dir .\experiments\logs\final-aot-validation-replicated-20260408-135251 `
+  --demo-dir .\experiments\logs\final-demo-20260403\demo `
+  --intel-batch-sweep-dir .\experiments\logs\intel-v2-batch-window-replicated-20260408-135251 `
+  --intel-v1-v2-sweep-dir .\experiments\logs\intel-v1-v2-isolation-replicated-20260408-135251 `
+  --intel-adaptive-sweep-dir .\experiments\logs\intel-v2-v3-adaptive-replicated-20260408-135251 `
+  --intel-adaptive-parameter-sweep-dir .\experiments\logs\intel-v3-adaptive-parameter-sweep-20260408-190517 `
+  --output-dir .\report\assets
+
+python .\experiments\build_run_registry.py `
+  --manifest-path .\report\assets\evidence_manifest.json `
+  --output .\experiments\logs\run_registry.json
+
+python .\experiments\package_paper_assets.py `
+  --report-assets-dir .\report\assets `
+  --paper-dir .\research_paper
+```
+
+Current frozen evidence roots:
+
+- `experiments/logs/final-intel-primary-replicated-20260408-135251/`
+- `experiments/logs/final-aot-validation-replicated-20260408-135251/`
+- `experiments/logs/final-demo-20260403/`
+- `experiments/logs/intel-v2-batch-window-replicated-20260408-135251/`
+- `experiments/logs/intel-v1-v2-isolation-replicated-20260408-135251/`
+- `experiments/logs/intel-v2-v3-adaptive-replicated-20260408-135251/`
+- `experiments/logs/intel-v3-adaptive-parameter-sweep-20260408-190517/`
+
+Future reruns should use a fresh stamp and should not overwrite historical evidence roots. The reported impairment path is the gateway-to-dashboard last hop through `experiments/impairment_proxy.py`; reported downstream bytes and frames come from proxy output counters.
+
+Run a full replicated equivalence check against the frozen evidence roots:
+
+```powershell
+$stamp = "cleanup-equivalence-replicated-$(Get-Date -Format yyyyMMdd-HHmmss)"
+python .\experiments\run_replicated_equivalence_check.py `
+  --stamp $stamp `
+  --intel-input .\experiments\logs\final-source-downloads\intel_data.txt.gz `
+  --aot-input .\experiments\logs\final-source-downloads\aot_weekly.tar `
+  --execute
+```
 
 ## Environment Variables
 

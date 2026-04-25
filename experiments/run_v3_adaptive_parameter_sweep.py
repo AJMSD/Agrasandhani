@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,8 +19,8 @@ from experiments.run_sweep import (
     parse_seed_list,
     run_once,
 )
-from experiments.sweep_aggregation import write_condition_aggregates
 from experiments.run_v1_v2_isolation_sweep import parse_csv_list
+from experiments.sweep_aggregation import write_condition_aggregates, write_summary_csv
 
 DEFAULT_SCENARIOS = ["bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"]
 DEFAULT_ADAPTIVE_SEND_SLOW_VALUES = [25, 50, 100]
@@ -52,27 +51,20 @@ class V3AdaptiveParameterSweepConfig:
     default_impairment_seed: int = DEFAULT_IMPAIRMENT_SEED
 
 
-def _write_summary_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "scenario",
-                "variant",
-                "batch_window_ms",
-                "adaptive_send_slow_ms",
-                "adaptive_step_up_ms",
-                "adaptive_max_batch_window_ms",
-                "condition_id",
-                "trial_id",
-                "trial_index",
-                "impairment_seed",
-                "run_id",
-                "run_dir",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+SUMMARY_CSV_FIELDS = [
+    "scenario",
+    "variant",
+    "batch_window_ms",
+    "adaptive_send_slow_ms",
+    "adaptive_step_up_ms",
+    "adaptive_max_batch_window_ms",
+    "condition_id",
+    "trial_id",
+    "trial_index",
+    "impairment_seed",
+    "run_id",
+    "run_dir",
+]
 
 
 def _iter_parameter_grid(config: V3AdaptiveParameterSweepConfig) -> list[dict[str, int]]:
@@ -204,7 +196,7 @@ def run_v3_adaptive_parameter_sweep(config: V3AdaptiveParameterSweepConfig) -> P
         "runs": completed_runs,
     }
     (sweep_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    _write_summary_csv(sweep_dir / "summary.csv", completed_runs)
+    write_summary_csv(sweep_dir / "summary.csv", fieldnames=SUMMARY_CSV_FIELDS, rows=completed_runs)
     write_condition_aggregates(sweep_dir)
     return sweep_dir
 

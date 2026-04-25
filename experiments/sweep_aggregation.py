@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from statistics import fmean, pstdev
@@ -194,3 +195,10 @@ def write_condition_aggregates(sweep_dir: Path) -> Path:
     output_path = sweep_dir / CONDITION_AGGREGATES_FILENAME
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return output_path
+
+
+def write_summary_csv(path: Path, *, fieldnames: list[str], rows: list[dict[str, object]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)

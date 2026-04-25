@@ -458,15 +458,14 @@ def _paper_native_assets(*, paper_dir: Path) -> list[dict[str, object]]:
 def package_assets(*, report_assets_dir: Path, paper_dir: Path) -> dict[str, object]:
     figures_src = report_assets_dir / "figures"
     tables_src = report_assets_dir / "tables"
-    paper_figures = paper_dir / "figures"
-    paper_tables = paper_dir / "tables"
-    previous_manifest_path = paper_tables / "paper_assets_manifest.json"
+    paper_assets = paper_dir / "assets"
+    previous_manifest_path = paper_assets / "paper_assets_manifest.json"
 
-    latex_table_path = _canonical_paper_asset_path("tables", "intel_main_summary_table.tex")
-    asset_index_path = _canonical_paper_asset_path("tables", "paper_asset_index.md")
+    latex_table_path = _canonical_paper_asset_path("assets", "intel_main_summary_table.tex")
+    asset_index_path = _canonical_paper_asset_path("assets", "paper_asset_index.md")
 
     desired_paths = {
-        _canonical_paper_asset_path(spec["paper_subdir"], spec["filename"])
+        _canonical_paper_asset_path("assets", spec["filename"])
         for spec in REPORT_ASSET_SPECS
     }
     desired_paths.update({latex_table_path, asset_index_path})
@@ -486,10 +485,9 @@ def package_assets(*, report_assets_dir: Path, paper_dir: Path) -> dict[str, obj
 
     for spec in REPORT_ASSET_SPECS:
         source_dir = figures_src if spec["paper_subdir"] == "figures" else tables_src
-        destination_dir = paper_figures if spec["paper_subdir"] == "figures" else paper_tables
         _copy_report_asset(
             source_dir=source_dir,
-            destination_dir=destination_dir,
+            destination_dir=paper_assets,
             filename=spec["filename"],
         )
 
@@ -501,7 +499,7 @@ def package_assets(*, report_assets_dir: Path, paper_dir: Path) -> dict[str, obj
         source_report_asset_path = _canonical_report_asset_path(spec["paper_subdir"], spec["filename"])
         packaged_assets.append(
             _packaged_asset_entry(
-                paper_asset_path=_canonical_paper_asset_path(spec["paper_subdir"], spec["filename"]),
+                paper_asset_path=_canonical_paper_asset_path("assets", spec["filename"]),
                 paper_asset_kind=spec["paper_asset_kind"],
                 source_report_asset_path=source_report_asset_path,
                 report_entry=report_asset_entries[source_report_asset_path],

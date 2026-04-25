@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 from dataclasses import dataclass
@@ -13,8 +12,16 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from experiments.run_v1_v2_isolation_sweep import parse_csv_list
-from experiments.run_sweep import DEFAULT_IMPAIRMENT_SEED, LOGS_ROOT, SweepConfig, _port_open, ensure_browser_capture_prerequisites, parse_seed_list, run_once
-from experiments.sweep_aggregation import write_condition_aggregates
+from experiments.run_sweep import (
+    DEFAULT_IMPAIRMENT_SEED,
+    LOGS_ROOT,
+    SweepConfig,
+    _port_open,
+    ensure_browser_capture_prerequisites,
+    parse_seed_list,
+    run_once,
+)
+from experiments.sweep_aggregation import write_condition_aggregates, write_summary_csv
 
 DEFAULT_VARIANTS = ["v2", "v3"]
 DEFAULT_SCENARIOS = ["bandwidth_200kbps", "loss_2pct", "delay_50ms_jitter20ms"]
@@ -106,24 +113,17 @@ def build_sweep_config(
     )
 
 
-def _write_summary_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "scenario",
-                "variant",
-                "batch_window_ms",
-                "condition_id",
-                "trial_id",
-                "trial_index",
-                "impairment_seed",
-                "run_id",
-                "run_dir",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+SUMMARY_CSV_FIELDS = [
+    "scenario",
+    "variant",
+    "batch_window_ms",
+    "condition_id",
+    "trial_id",
+    "trial_index",
+    "impairment_seed",
+    "run_id",
+    "run_dir",
+]
 
 
 def run_adaptive_impairment_sweep(config: AdaptiveImpairmentSweepConfig) -> Path:
@@ -193,7 +193,7 @@ def run_adaptive_impairment_sweep(config: AdaptiveImpairmentSweepConfig) -> Path
         "runs": completed_runs,
     }
     (sweep_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    _write_summary_csv(sweep_dir / "summary.csv", completed_runs)
+    write_summary_csv(sweep_dir / "summary.csv", fieldnames=SUMMARY_CSV_FIELDS, rows=completed_runs)
     write_condition_aggregates(sweep_dir)
     return sweep_dir
 
