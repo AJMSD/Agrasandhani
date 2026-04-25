@@ -462,7 +462,7 @@ export BURST_SPEED_MULTIPLIER=5
 ./experiments/run_one.sh
 ```
 
-Artifacts are written to `experiments/logs/<RUN_ID>/`:
+Outputs are written to `experiments/logs/<RUN_ID>/`:
 
 - `gateway_forward_log.csv`: per-message timing log with frame window and adaptation decision columns
 - `gateway.stdout.log` and `gateway.stderr.log`
@@ -567,7 +567,7 @@ Default demo behavior:
 - ports: baseline gateway `8000`, smart gateway `8001`, baseline proxy `9000`, smart proxy `9001`
 - compare page: served from the baseline proxy at `/ui/demo_compare.html`
 - default behavior remains fail-fast if those demo ports are already occupied
-- browser artifact capture is off by default and only runs when explicitly requested
+- browser output capture is off by default and only runs when explicitly requested
 
 One-command launch:
 
@@ -603,7 +603,7 @@ python ./experiments/run_demo.py --run-id m5-demo-smoke --no-open-browser
 Optional additive flags:
 
 - `--auto-ports`: if one of the default demo ports is busy, reassign only the conflicting services to free ports and record the effective ports in `manifest.json`
-- `--capture-artifacts`: capture baseline and smart dashboard CSV/summary/screenshot artifacts plus a final `demo_compare.png` screenshot
+- `--capture-artifacts`: capture baseline and smart dashboard CSV, summaries, screenshots, plus a final `demo_compare.png` screenshot
 
 Examples:
 
@@ -629,7 +629,7 @@ Expected live differences:
 - during the outage phase both sides stop receiving frames, but `v4` keeps the last-known-good rows visible and marks them stale once the TTL expires
 - after recovery the `v4` side should settle back into a cleaner cadence more quickly than the raw baseline feed
 
-Artifacts are written to `experiments/logs/<RUN_ID>/demo/`:
+Outputs are written to `experiments/logs/<RUN_ID>/demo/`:
 
 - `baseline_gateway.stdout.log`, `baseline_gateway.stderr.log`
 - `smart_gateway.stdout.log`, `smart_gateway.stderr.log`
