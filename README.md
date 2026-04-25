@@ -712,6 +712,17 @@ Current frozen evidence roots:
 
 Future reruns should use a fresh stamp and should not overwrite historical evidence roots. The reported impairment path is the gateway-to-dashboard last hop through `experiments/impairment_proxy.py`; reported downstream bytes and frames come from proxy output counters.
 
+Run a full replicated equivalence check against the frozen evidence roots:
+
+```powershell
+$stamp = "cleanup-equivalence-replicated-$(Get-Date -Format yyyyMMdd-HHmmss)"
+python .\experiments\run_replicated_equivalence_check.py `
+  --stamp $stamp `
+  --intel-input .\experiments\logs\final-source-downloads\intel_data.txt.gz `
+  --aot-input .\experiments\logs\final-source-downloads\aot_weekly.tar `
+  --execute
+```
+
 ## Environment Variables
 
 - `MQTT_HOST`, `MQTT_PORT`, `MQTT_QOS`
