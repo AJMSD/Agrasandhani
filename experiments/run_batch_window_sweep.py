@@ -10,8 +10,15 @@ if __package__ in {None, ""}:
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from experiments.run_sweep import LOGS_ROOT, SweepConfig, _port_open, ensure_browser_capture_prerequisites, run_once
-from experiments.run_sweep import DEFAULT_IMPAIRMENT_SEED, parse_seed_list
+from experiments.run_sweep import (
+    DEFAULT_IMPAIRMENT_SEED,
+    LOGS_ROOT,
+    SweepConfig,
+    _port_open,
+    ensure_browser_capture_prerequisites,
+    parse_seed_list,
+    run_once,
+)
 from experiments.sweep_aggregation import write_condition_aggregates
 
 DEFAULT_BATCH_WINDOWS = [50, 100, 250, 500, 1000]
@@ -109,12 +116,12 @@ def run_batch_window_sweep(config: BatchWindowSweepConfig) -> Path:
                 **run_once_kwargs,
             )
             completed_runs.append(
-                    {
-                        "batch_window_ms": batch_window_ms,
-                        "run_dir": str(run_dir),
-                        "run_id": f"{run_dir.parent.name}-{run_dir.name}" if use_trial_layout else run_dir.name,
-                        "condition_id": run_dir.parent.name if use_trial_layout else run_dir.name,
-                        "trial_id": run_dir.name if use_trial_layout else None,
+                {
+                    "batch_window_ms": batch_window_ms,
+                    "run_dir": str(run_dir),
+                    "run_id": f"{run_dir.parent.name}-{run_dir.name}" if use_trial_layout else run_dir.name,
+                    "condition_id": run_dir.parent.name if use_trial_layout else run_dir.name,
+                    "trial_id": run_dir.name if use_trial_layout else None,
                     "trial_index": trial_index if use_trial_layout else None,
                     "impairment_seed": impairment_seed,
                 }
