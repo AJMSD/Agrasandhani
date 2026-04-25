@@ -269,6 +269,8 @@ The isolation and adaptive sweeps narrow the mechanism-level story. In the V1 ve
 
 Likewise, the V2 versus V3 adaptive comparison shows no material advantage for the tested controller: stale fraction, frames, and bytes remain unchanged, the effective batch window stays fixed at 250\,ms, and the broader parameter sweep yields no scenario in which the controller leaves that operating point and improves stability without violating the latency or byte guardrails.
 
+As a supplemental combined-stress check, we also ran the Intel QoS~0 workload under \texttt{stress\_combined}, which applies a 100\,kbps last-hop cap, 5\% loss, 100\,ms delay, 40\,ms jitter, and a 5\,s outage in one scenario. The same frame-churn result persisted: V0 emitted 109.3 downstream frames on average, while V2 and V4 emitted 5.0 and 5.7. The harsher stacked impairment made naive forwarding queue badly, so p95 display age was 3407.7\,ms for V0 versus 388.7\,ms for V2 and 450.3\,ms for V4; this should be read as a pacing result, not a general freshness win. Payload bytes still do not support a blanket byte-reduction claim: V0, V2, and V4 emitted 9{,}999, 11{,}938, and 15{,}734 downstream bytes. V4 ended with 92 retained latest rows marked stale, while the browser export recorded no rendered samples inside the 10--15\,s outage window, so this check reinforces the bounded interpretation that Agrasandhani preserves paced dashboard continuity rather than guaranteed freshness.
+
 \begin{table}[H]
 \centering
 \caption{Intel QoS sensitivity: QoS~1 minus QoS~0 ranges.}
